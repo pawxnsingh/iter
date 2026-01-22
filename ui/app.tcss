@@ -1,0 +1,28 @@
+/* Global app styling. Ported from toad/toad.tcss. */
+
+/* Vertical rhythm for every chat block */
+.block {
+    margin: 1 1 1 0;
+}
+
+/* Markdown rendered in the conversation should flow naturally. */
+Markdown {
+    layout: stream;
+}
+
+LoadingIndicator {
+    background: transparent;
+}
+
+.-hidden {
+    display: none;
+}
+
+Checkbox {
+    text-overflow: clip;
+}
+
+/* Loading label color */
+Loading {
+    color: $text-primary;
+}
