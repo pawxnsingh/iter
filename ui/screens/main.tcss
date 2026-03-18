@@ -1,0 +1,115 @@
+/* Main screen — ported from toad's screens/main.tcss.
+   Layers match toad's: sidebar (above), screen (middle), base (below). */
+
+MainScreen {
+    background: $background;
+    layers: sidebar screen base;
+
+    /* Sidebar — slides off-screen by default, slides in on focus-within.
+       Copy of toad's pure-CSS sidebar state machine. */
+    SideBar {
+        border-right: tall black 10%;
+        background: $surface;
+        layer: sidebar;
+        dock: left;
+
+        overflow: hidden scroll;
+        scrollbar-size: 0 0;
+        box-sizing: border-box;
+        padding: 0;
+        margin: 0;
+        width: 40;
+        max-width: 45%;
+        min-width: 40;
+        height: 1fr;
+
+        /* Off-screen until a descendant gets focus. */
+        offset-x: -100%;
+        &:focus-within { offset-x: 0; }
+
+        DirectoryTree {
+            height: 1fr;
+            background: transparent;
+            &:focus { background-tint: transparent; }
+        }
+
+        Plan {
+            border: none !important;
+            margin: 0 !important;
+            padding: 0 1 0 0;
+            background: transparent;
+        }
+
+        Collapsible {
+            width: 1fr;
+            height: 1fr;
+            min-height: 3;
+            &.-collapsed { height: auto; }
+            &.-fixed {
+                height: auto;
+                Contents { height: auto; }
+            }
+            Contents {
+                height: 1fr;
+                padding: 1 0 0 0;
+            }
+        }
+    }
+}
+
+/* Footer styling — ported from toad/toad.tcss Footer block */
+Footer {
+    background: transparent;
+    .footer-key--key {
+        color: $text;
+        background: transparent;
+        padding: 0 1;
+    }
+    .footer-key--description {
+        padding: 0 1 0 0;
+        color: $text-muted;
+    }
+    &:hover {
+        color: transparent;
+        background: transparent;
+    }
+    &.-disabled { text-style: dim; }
+    FooterLabel { color: $text-muted; }
+    FooterKey.-disabled .footer-key--key { text-opacity: 0.6; }
+}
+
+HelpPanel {
+    border-left: solid white 7%;
+    padding-right: 0;
+
+    #widget-help {
+        border: round $secondary;
+        background: transparent;
+        margin-top: 0;
+        padding: 0;
+        MarkdownBlock { padding: 0 1; }
+        MarkdownH2 { margin: 0 0 1 0; }
+        MarkdownBlock:last-child { margin: 0; }
+    }
+
+    KeyPanel {
+        scrollbar-gutter: stable;
+        &> BindingsTable > .bindings-table--description { text-opacity: 90%; }
+        .bindings-table--key { color: $text; }
+        &> BindingsTable > .bindings-table--header {
+            color: $primary;
+            text-style: underline;
+        }
+    }
+}
+
+Toast {
+    margin: 0;
+    padding: 0 1;
+    background: $background;
+    color: $text-muted;
+    .toast--title { color: $text; }
+    &.-information { border: round $primary; }
+    &.-warning     { border: round $warning; }
+    &.-error       { border: round $error; }
+}
