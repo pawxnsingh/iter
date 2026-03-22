@@ -221,7 +221,12 @@ class PieAgent:
 @click.option("--max-turns", type=int)
 @click.option("--permission-mode", type=click.Choice(["default", "plan", "bypass", "accept_edits", "dont_ask"]))
 @click.option("--debug", is_flag=True)
-def main(cwd, model, max_turns, permission_mode, debug):
+@click.option(
+    "--tui/--legacy",
+    default=True,
+    help="Launch the Textual TUI (default) or fall back to the readline REPL.",
+)
+def main(cwd, model, max_turns, permission_mode, debug, tui):
     config = load_config(cwd=cwd)
     if model:
         config.model_name = model
@@ -239,6 +244,9 @@ def main(cwd, model, max_turns, permission_mode, debug):
             print(f"Error: {e}")
         sys.exit(1)
 
+    if tui:
+        from ui.app import run_tui
+        sys.exit(run_tui(config))
     asyncio.run(PieAgent(config).run())
 
 
