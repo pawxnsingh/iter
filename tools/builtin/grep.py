@@ -1,9 +1,11 @@
 import os
-from pathlib import Path
 import re
-from tools.base import Tool, ToolInvocation, ToolKind, ToolResult
+from pathlib import Path
+
 from pydantic import BaseModel, Field
-from utils.paths import is_binary_file, resolve_path
+
+from tools.base import Tool, ToolInvocation, ToolKind, ToolResult
+from utils.paths import is_binary, resolve_path
 
 
 class GrepParams(BaseModel):
@@ -11,17 +13,23 @@ class GrepParams(BaseModel):
     path: str = Field(
         ".", description="File or directory to search in (default: current directory)"
     )
-    case_insensitive: bool = Field( 
+    case_insensitive: bool = Field(
         False,
         description="Case-insensitive search (default: false)",
     )
 
 
 class GrepTool(Tool):
-    name = "grep"
-    description = "Search for a regex pattern in file contents. Returns matching lines with file paths and line numbers."
+    name = "Grep"
+    description = "A powerful search tool that searches file contents using regex patterns. Supports full regex syntax (e.g., \"log.*Error\", \"function\\s+\\w+\"). Use this tool for all content search tasks. NEVER invoke grep or rg as a Bash command."
     kind = ToolKind.READ
     schema = GrepParams
+
+    def is_concurrency_safe(self, params: dict) -> bool:
+        return True
+
+    def is_read_only(self, params: dict) -> bool:
+        return True
 
     async def execute(self, invocation: ToolInvocation) -> ToolResult:
         params = GrepParams(**invocation.params)
@@ -65,7 +73,10 @@ class GrepTool(Tool):
                 if pattern.search(line):
                     matches += 1
                     if not file_matches:
-                        rel_path = file_path.relative_to(invocation.cwd)
+                        try:
+                            rel_path = file_path.relative_to(invocation.cwd)
+                        except ValueError:
+                            rel_path = file_path
                         output_lines.append(f"=== {rel_path} ===")
                         file_matches = True
 
@@ -108,7 +119,7 @@ class GrepTool(Tool):
                     continue
 
                 file_path = Path(root) / filename
-                if not is_binary_file(file_path):
+                if not is_binary(file_path):
                     files.append(file_path)
                     if len(files) >= 500:
                         return files

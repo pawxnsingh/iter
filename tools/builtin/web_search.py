@@ -1,6 +1,7 @@
-from tools.base import Tool, ToolInvocation, ToolKind, ToolResult
-from pydantic import BaseModel, Field
 from ddgs import DDGS
+from pydantic import BaseModel, Field
+
+from tools.base import Tool, ToolInvocation, ToolKind, ToolResult
 
 
 class WebSearchParams(BaseModel):
@@ -14,10 +15,16 @@ class WebSearchParams(BaseModel):
 
 
 class WebSearchTool(Tool):
-    name = "web_search"
-    description = "Search the web for information. Returns search results with titles, URLs and snippets"
+    name = "WebSearch"
+    description = "Search the web for information using DuckDuckGo. Returns search results with titles, URLs and snippets. Use this for accessing information beyond the knowledge cutoff."
     kind = ToolKind.NETWORK
     schema = WebSearchParams
+
+    def is_concurrency_safe(self, params: dict) -> bool:
+        return True
+
+    def is_read_only(self, params: dict) -> bool:
+        return True
 
     async def execute(self, invocation: ToolInvocation) -> ToolResult:
         params = WebSearchParams(**invocation.params)

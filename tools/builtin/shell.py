@@ -1,11 +1,38 @@
 import asyncio
+import fnmatch
 import os
-from pathlib import Path
 import signal
 import sys
-from tools.base import Tool, ToolConfirmation, ToolInvocation, ToolKind, ToolResult
+from pathlib import Path
+
 from pydantic import BaseModel, Field
-import fnmatch
+
+from tools.base import Tool, ToolConfirmation, ToolInvocation, ToolKind, ToolResult
+
+# Commands that are always read-only (safe to run in parallel)
+READ_ONLY_COMMANDS = {
+    "ls", "dir", "cat", "head", "tail", "less", "more", "wc", "sort", "uniq",
+    "grep", "rg", "find", "fd", "tree", "file", "stat", "du", "df",
+    "which", "whereis", "type", "echo", "printf", "date", "whoami",
+    "pwd", "env", "printenv", "hostname", "uname", "id",
+    "git status", "git log", "git diff", "git show", "git blame",
+    "git branch", "git remote", "git tag", "git stash list",
+    "python --version", "python3 --version", "node --version",
+    "npm --version", "pip --version", "cargo --version",
+}
+
+# Commands that are destructive (irreversible — extra warning)
+DESTRUCTIVE_PATTERNS = {
+    "rm -rf", "rm -r", "rm -f",
+    "git push --force", "git push -f",
+    "git reset --hard",
+    "git clean -f", "git clean -fd",
+    "git checkout .", "git restore .",
+    "git stash drop", "git stash clear",
+    "git branch -D",
+    "drop table", "drop database", "truncate",
+    "kubectl delete", "terraform destroy",
+}
 
 BLOCKED_COMMANDS = {
     "rm -rf /",
@@ -37,11 +64,33 @@ class ShellParams(BaseModel):
 
 
 class ShellTool(Tool):
-    name = "shell"
+    name = "Bash"
     kind = ToolKind.SHELL
-    description = "Execute a shell command. Use this for running system commands, scripts and CLI tools."
+    description = "Executes a given bash command and returns its output. IMPORTANT: Avoid using this tool to run find, grep, cat, head, tail, sed, awk, or echo commands. Instead, use the appropriate dedicated tool: Read for files, Edit for modifications, Write for creation, Glob for file search, Grep for content search."
 
     schema = ShellParams
+
+    def is_concurrency_safe(self, params: dict) -> bool:
+        """Safe to run in parallel only if the command is read-only."""
+        return self.is_read_only(params)
+
+    def is_read_only(self, params: dict) -> bool:
+        """Check if command is read-only using security analyzer."""
+        from permissions.bash_security import analyze_command
+        command = params.get("command", "").strip()
+        if not command:
+            return False
+        analysis = analyze_command(command)
+        return analysis.is_read_only
+
+    def is_destructive(self, params: dict) -> bool:
+        """Check if command is destructive using security analyzer."""
+        from permissions.bash_security import analyze_command
+        command = params.get("command", "").strip()
+        if not command:
+            return False
+        analysis = analyze_command(command)
+        return analysis.is_destructive
 
     async def get_confirmation(
         self, invocation: ToolInvocation
@@ -68,10 +117,20 @@ class ShellTool(Tool):
 
     async def execute(self, invocation: ToolInvocation) -> ToolResult:
         params = ShellParams(**invocation.params)
+        command = params.command.strip()
 
-        command = params.command.lower().strip()
+        # Use proper security analyzer (not substring matching)
+        from permissions.bash_security import analyze_command
+        analysis = analyze_command(command)
+        if not analysis.is_safe:
+            return ToolResult.error_result(
+                f"Command blocked: {analysis.reason}",
+                metadata={"blocked": True, "risk_level": analysis.risk_level},
+            )
+
+        # Also check the simple blocklist as a defense-in-depth layer
         for blocked in BLOCKED_COMMANDS:
-            if blocked in command:
+            if blocked in command.lower():
                 return ToolResult.error_result(
                     f"Command blocked for safety: {params.command}",
                     metadata={"blocked": True},
@@ -97,7 +156,7 @@ class ShellTool(Tool):
             *shell_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=cwd, 
+            cwd=cwd,
             env=env,
             start_new_session=True,
         )
@@ -108,10 +167,13 @@ class ShellTool(Tool):
                 timeout=params.timeout,
             )
         except asyncio.TimeoutError:
-            if sys.platform != "win32":
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-            else:
-                process.kill()
+            try:
+                if sys.platform != "win32":
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                else:
+                    process.kill()
+            except (ProcessLookupError, PermissionError):
+                pass  # Process already exited
             await process.wait()
             return ToolResult.error_result(f"Command timed out after {params.timeout}s")
 
@@ -141,20 +203,33 @@ class ShellTool(Tool):
         )
 
     def _build_environment(self) -> dict[str, str]:
-        env = os.environ.copy()
+        try:
+            env = os.environ.copy()
+            shell_environment = self.config.shell_environment
 
-        shell_environment = self.config.shell_environment
+            # Default patterns + additional safety patterns
+            all_patterns = list(shell_environment.exclude_patterns) + [
+                "*PASSWORD*", "*PASSWD*", "*CREDENTIAL*",
+            ]
 
-        if not shell_environment.ignore_default_excludes:
-            for pattern in shell_environment.exclude_patterns:
-                keys_to_remove = [
-                    k for k in env.keys() if fnmatch.fnmatch(k.upper(), pattern.upper())
-                ]
+            if not shell_environment.ignore_default_excludes:
+                for pattern in all_patterns:
+                    keys_to_remove = [
+                        k for k in env.keys() if fnmatch.fnmatch(k.upper(), pattern.upper())
+                    ]
+                    for k in keys_to_remove:
+                        del env[k]
 
-                for k in keys_to_remove:
-                    del env[k]
+            if shell_environment.set_vars:
+                env.update(shell_environment.set_vars)
 
-        if shell_environment.set_vars:
-            env.update(shell_environment.set_vars)
-
-        return env
+            return env
+        except Exception:
+            # On any error, return minimal safe environment (platform-aware)
+            safe_env = {"PATH": os.environ.get("PATH", os.defpath)}
+            if sys.platform != "win32":
+                safe_env["HOME"] = os.environ.get("HOME", "/tmp")
+            else:
+                safe_env["USERPROFILE"] = os.environ.get("USERPROFILE", "C:\\Users")
+                safe_env["SystemRoot"] = os.environ.get("SystemRoot", "C:\\Windows")
+            return safe_env

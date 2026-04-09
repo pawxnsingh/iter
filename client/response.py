@@ -1,8 +1,9 @@
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import Any
-from enum import Enum
+
 import json
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any
 
 
 # this gonna contain the schema
@@ -65,7 +66,7 @@ class ToolResultMessage:
     def to_open_schema(self) -> dict[str, Any]:
         return {
             "role": "tool",
-            "tool_call_id": self.call_id,
+            "tool_call_id": self.tool_call_id,
             "content": self.content,
         }
 
@@ -91,5 +92,4 @@ def parse_arguments_response(arguments_str: str) -> dict[str, Any]:
         return json.loads(arguments_str)
 
     except json.JSONDecodeError:
-        print("fcked up")
         return {"raw_arguments": arguments_str}

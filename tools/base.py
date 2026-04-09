@@ -1,12 +1,15 @@
 from __future__ import annotations
+
 import abc
-from typing import Any
-from enum import Enum
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from config.config import Config
+from typing import Any
+
 from pydantic import BaseModel, ValidationError
 from pydantic.json_schema import model_json_schema
+
+from config.config import Config
 
 
 class ToolKind(str, Enum):
@@ -61,7 +64,7 @@ class ToolInvocation:
 @dataclass
 class ToolConfirmation:
     tool_name: str
-    param: dict[str, Any]
+    params: dict[str, Any]
     description: str
 
     # shell commands
@@ -116,6 +119,8 @@ class ToolResult:
 class Tool(abc.ABC):
     name: str = "base_tool"
     description: str = "Base Tool"
+    # default for the tool call, like if the grep tool return the 500k char that can eat up all the context window
+    max_result_size_chars = 100_000
     kind: ToolKind = ToolKind.READ
 
     def __init__(self, config: Config) -> None:
@@ -125,7 +130,7 @@ class Tool(abc.ABC):
     @property
     def schema(self) -> dict[str, Any] | type[BaseModel]:
         raise NotImplementedError(
-            "Tool must define schema property amd other attribute"
+            "Tool must define schema property and other attributes"
         )
 
     @abc.abstractmethod
@@ -169,9 +174,21 @@ class Tool(abc.ABC):
 
         return ToolConfirmation(
             tool_name=self.name,
-            param=invocation.params,
+            params=invocation.params,
             description=f"Execute: {self.name}",
         )
+
+    # there can be scenarios, where we can execute tool concurrently
+    def is_concurrency_safe(self, params: dict) -> bool:
+        return False
+
+    # if read only we can skip permissions
+    def is_read_only(self, params: dict) -> bool:
+        return False
+
+    # get extra warnings, if that's little distructive
+    def is_destructive(self, params: dict) -> bool:
+        return False
 
     def to_openai_schema(self) -> dict[str, Any]:
         schema = self.schema
@@ -195,9 +212,9 @@ class Tool(abc.ABC):
             }
 
             if "parameters" in schema:
-                result["parameter"] = schema["parameters"]
+                result["parameters"] = schema["parameters"]
             else:
-                result["parameter"] = schema
+                result["parameters"] = schema
 
             return result
 

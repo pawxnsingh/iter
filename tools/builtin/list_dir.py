@@ -1,5 +1,6 @@
-from tools.base import Tool, ToolInvocation, ToolKind, ToolResult
 from pydantic import BaseModel, Field
+
+from tools.base import Tool, ToolInvocation, ToolKind, ToolResult
 from utils.paths import resolve_path
 
 
@@ -14,11 +15,17 @@ class ListDirParams(BaseModel):
 
 
 class ListDirTool(Tool):
-    name = "list_dir"
+    name = "ListDir"
     kind = ToolKind.READ
-    description = "List contents of a directory"
+    description = "List contents of a directory. Returns files and subdirectories sorted with directories first."
 
     schema = ListDirParams
+
+    def is_concurrency_safe(self, params: dict) -> bool:
+        return True
+
+    def is_read_only(self, params: dict) -> bool:
+        return True
 
     async def execute(self, invocation: ToolInvocation) -> ToolResult:
         params = ListDirParams(**invocation.params)

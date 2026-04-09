@@ -1,7 +1,9 @@
 from pydantic import BaseModel, Field
+
 from tools.base import Tool, ToolInvocation, ToolKind, ToolResult
-from utils.paths import resolve_path, is_binary
+from utils.paths import is_binary, resolve_path
 from utils.text import count_tokens, truncate_text
+
 
 class ReadFileParams(BaseModel):
     path: str = Field(
@@ -23,18 +25,27 @@ class ReadFileParams(BaseModel):
 
 
 class ReadFileTool(Tool):
-    name = "read_file"
+    name = "Read"
     description = (
-        "Reads the contents of a file from the specified path, with optional line offset and limit parameters. "
-        "For larger files, use offsets and limits to read specific portions of the file instead of loading the entire content. "
-        "Cannot read binary files such as images, executables, or compiled code. "
-        "Useful for examining source code, configuration files, logs, and other text-based documents."
+        "Reads a file from the local filesystem. You can access any file directly by using this tool. "
+        "Assume this tool is able to read all files on the machine. Results are returned using cat -n format, "
+        "with line numbers starting at 1. By default, it reads up to 2000 lines starting from the beginning. "
+        "When you already know which part of the file you need, only read that part."
     )
     schema = ReadFileParams
     kind = ToolKind.READ
 
     MAX_FILE_SIZE = 1024 * 1024 * 10  # 10MB
     MAX_OUTPUT_TOKENS = 25000
+
+    def is_concurrency_safe(self, params: dict) -> bool:
+        return True
+
+    def is_read_only(self, params: dict) -> bool:
+        return True
+
+    def get_path(self, params: dict) -> str | None:
+        return params.get("path")
 
     async def execute(self, invocation: ToolInvocation) -> ToolResult:
         params = ReadFileParams(**invocation.params)
@@ -71,7 +82,7 @@ class ReadFileTool(Tool):
         try:
             try:
                 read_file = path.read_text("utf-8")
-            except UnicodeEncodeError:
+            except UnicodeDecodeError:
                 read_file = path.read_text("latin-1")
 
             # print(read_file)
@@ -84,7 +95,7 @@ class ReadFileTool(Tool):
                 return ToolResult.success_result(
                     output="File is Empty",
                     metadata={
-                        lines: 0,
+                        "lines": 0,
                     },
                 )
 
@@ -136,7 +147,6 @@ class ReadFileTool(Tool):
             )
 
         except Exception as e:
-            print(f"Error: {str(e)}")
             return ToolResult.error_result(
                 f"Failed to read files: {e}",
             )

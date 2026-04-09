@@ -1,55 +1,82 @@
-import uuid
-from config.config import Config
-from tools.base import Tool, ToolInvocation, ToolKind, ToolResult
+"""
+TodoWrite tool — structured task management matching Claude Code.
+
+Source: Claude Code src/tools/TodoWriteTool/
+
+Task states: pending → in_progress → completed
+The model submits the FULL todo list each time (replace, not patch).
+This ensures consistency and lets the model reorder/restructure freely.
+"""
+
+from __future__ import annotations
+
+
 from pydantic import BaseModel, Field
 
+from config.config import Config
+from tools.base import Tool, ToolInvocation, ToolKind, ToolResult
 
-class TodosParams(BaseModel):
-    action: str = Field(..., description="Action: 'add', 'complete', 'list', 'clear'")
-    id: str | None = Field(None, description="Todo ID (for complete)")
-    content: str | None = Field(None, description="Todo content (for add)")
+
+class TodoItem(BaseModel):
+    content: str = Field(..., description="What needs to be done (imperative form)")
+    status: str = Field(
+        "pending",
+        description="Task status: 'pending', 'in_progress', or 'completed'",
+    )
+
+
+class TodoWriteParams(BaseModel):
+    todos: list[TodoItem] = Field(
+        ...,
+        description="The complete updated todo list. Submit the FULL list each time.",
+    )
 
 
 class TodosTool(Tool):
-    name = "todos"
-    description = "Manage a task list for the current session. Use this to track progress on multi-step tasks."
+    name = "TodoWrite"
+    description = (
+        "Create and manage a structured task list for your current session. "
+        "Submit the FULL todo list each time — this replaces the previous list. "
+        "Use status: 'pending' for new tasks, 'in_progress' for active work, "
+        "'completed' for finished tasks. Mark tasks in_progress BEFORE starting work. "
+        "Mark completed as soon as each task is done."
+    )
     kind = ToolKind.MEMORY
-    schema = TodosParams
+    schema = TodoWriteParams
 
     def __init__(self, config: Config) -> None:
         super().__init__(config)
-        self._todos: dict[str, str] = {}
+        self._todos: list[dict[str, str]] = []
 
     async def execute(self, invocation: ToolInvocation) -> ToolResult:
-        params = TodosParams(**invocation.params)
+        params = TodoWriteParams(**invocation.params)
 
-        if params.action.lower() == "add":
-            if not params.content:
-                return ToolResult.error_result("`content` required for 'add' action")
-            todo_id = str(uuid.uuid4())[:8]
-            self._todos[todo_id] = params.content
-            return ToolResult.success_result(
-                f"Added todo [{todo_id}]: {params.content}"
-            )
-        elif params.action.lower() == "complete":
-            if not params.id:
-                return ToolResult.error_result("`id` required for 'complete' action")
-            if params.id not in self._todos:
-                return ToolResult.error_result(f"Todo not found: {params.id}")
+        self._todos = [
+            {"content": t.content, "status": t.status}
+            for t in params.todos
+        ]
 
-            content = self._todos.pop(params.id)
-            return ToolResult.success_result(f"Completed todo [{params.id}]: {content}")
-        elif params.action == "list":
-            if not self._todos:
-                return ToolResult.success_result("No todos")
-            lines = ["Todos:"]
+        # Build summary
+        pending = sum(1 for t in self._todos if t["status"] == "pending")
+        in_progress = sum(1 for t in self._todos if t["status"] == "in_progress")
+        completed = sum(1 for t in self._todos if t["status"] == "completed")
 
-            for todo_id, content in self._todos.items():
-                lines.append(f"  [{todo_id}] {content}")
-            return ToolResult.success_result("\n".join(lines))
-        elif params.action == "clear":
-            count = len(self._todos)
-            self._todos.clear()
-            return ToolResult.success_result(f"Cleared {count} todos")
-        else:
-            return ToolResult.error_result(f"Unknown action: {params.action}")
+        lines = [f"Tasks updated: {pending} pending, {in_progress} in progress, {completed} completed", ""]
+
+        for t in self._todos:
+            icon = {"pending": "○", "in_progress": "◐", "completed": "●"}.get(t["status"], "?")
+            lines.append(f"  {icon} [{t['status']}] {t['content']}")
+
+        return ToolResult.success_result(
+            "\n".join(lines),
+            metadata={
+                "total": len(self._todos),
+                "pending": pending,
+                "in_progress": in_progress,
+                "completed": completed,
+            },
+        )
+
+    def get_todos(self) -> list[dict[str, str]]:
+        """Get current todo list (for /status command)."""
+        return list(self._todos)

@@ -1,0 +1,142 @@
+"""
+Session storage: JSONL-based transcript persistence.
+
+Source: Claude Code src/utils/sessionStorage.ts (8K+ lines)
+
+Each message is one JSON line, append-only (crash-safe).
+Sessions can be listed, loaded, and resumed.
+
+Directory structure:
+  ~/.config/ai-agent/projects/<slug>/
+    transcripts/<session_id>.jsonl
+    transcripts/<session_id>.meta.json
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from platformdirs import user_config_dir
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SessionMetadata:
+    """Metadata for a session, stored alongside the transcript."""
+    session_id: str
+    project_dir: str
+    cwd: str
+    model: str
+    created_at: str
+    updated_at: str
+    turn_count: int = 0
+    total_tokens: int = 0
+    message_count: int = 0
+
+
+def _sanitize_path(path: str) -> str:
+    """Create a filesystem-safe slug from a project path."""
+    return hashlib.md5(path.encode()).hexdigest()[:16]
+
+
+def _get_project_dir(project_path: str) -> Path:
+    """Get the project storage directory."""
+    slug = _sanitize_path(project_path)
+    return Path(user_config_dir("ai-agent")) / "projects" / slug
+
+
+class SessionStorage:
+    """
+    JSONL-based session persistence.
+    Claude Code: sessionStorage.ts — append-only JSONL transcripts.
+
+    Each message is one JSON line. This is crash-safe:
+    if the process dies mid-write, you lose at most one line.
+    """
+
+    def __init__(self, session_id: str, project_dir: str):
+        import re
+        # Validate session_id to prevent path traversal
+        if not re.match(r'^[a-zA-Z0-9_\-]{1,64}$', session_id):
+            raise ValueError(f"Invalid session ID: {session_id}")
+
+        base = _get_project_dir(project_dir) / "transcripts"
+        base.mkdir(parents=True, exist_ok=True)
+        self.path = base / f"{session_id}.jsonl"
+        self.meta_path = base / f"{session_id}.meta.json"
+        self.session_id = session_id
+        self.project_dir = project_dir
+        self._last_uuid: str | None = None  # Track chain for parentUuid
+
+    def append(self, role: str, content: str, **extra) -> None:
+        """
+        Append a message to the transcript with chain integrity (parentUuid).
+        Claude Code: messages linked via parentUuid → validates on resume.
+        """
+        import uuid as uuid_mod
+        msg_uuid = str(uuid_mod.uuid4())
+        entry = {
+            "role": role,
+            "content": content,
+            "uuid": msg_uuid,
+            "parent_uuid": self._last_uuid,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            **extra,
+        }
+        self._last_uuid = msg_uuid
+        with open(self.path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, default=str) + "\n")
+
+    def save_metadata(self, meta: SessionMetadata) -> None:
+        """Save session metadata alongside the transcript."""
+        meta.updated_at = datetime.now(timezone.utc).isoformat()
+        with open(self.meta_path, "w", encoding="utf-8") as f:
+            json.dump(asdict(meta), f, indent=2)
+
+    @classmethod
+    def load_transcript(cls, path: str | Path) -> list[dict[str, Any]]:
+        """Load all messages from a JSONL transcript file. Skips corrupt lines."""
+        messages = []
+        with open(path, encoding="utf-8") as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    messages.append(json.loads(line))
+                except json.JSONDecodeError:
+                    logger.warning(f"Skipping corrupt line {line_num} in {path}")
+        return messages
+
+    @classmethod
+    def list_sessions(cls, project_dir: str) -> list[SessionMetadata]:
+        """List all sessions for a project, sorted by date (newest first)."""
+        base = _get_project_dir(project_dir) / "transcripts"
+        if not base.exists():
+            return []
+
+        sessions = []
+        for meta_file in sorted(
+            base.glob("*.meta.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        ):
+            try:
+                data = json.loads(meta_file.read_text(encoding="utf-8"))
+                sessions.append(SessionMetadata(**data))
+            except Exception:
+                continue
+        return sessions
+
+    @classmethod
+    def get_latest_session(cls, project_dir: str) -> SessionMetadata | None:
+        """Get the most recent session for a project."""
+        sessions = cls.list_sessions(project_dir)
+        return sessions[0] if sessions else None

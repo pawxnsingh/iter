@@ -1,127 +1,142 @@
+"""
+Agent: Owns the query loop lifecycle.
+
+Claude Code equivalent: The Agent is thin — the real logic is in
+query_loop() (query/loop.py). Agent owns startup/shutdown and
+wires components together.
+
+Lifecycle hooks fired:
+  __aenter__  → SessionStart hooks
+  run()       → query_loop (PreToolUse/PostToolUse hooks inside)
+  __aexit__   → SessionEnd hooks
+"""
+
 from __future__ import annotations
-from typing import AsyncGenerator
-from config.config import Config
+
+import logging
+
 from agent.event import AgentEvent
 from agent.session import Session
-from client.response import StreamEventType, ToolCall, ToolResultMessage
+from config.config import Config
+from core_types.hooks import HookEvent
+from hooks.config import capture_hooks_snapshot, get_hooks_from_snapshot
+from hooks.executor import HookExecutor
+from query.loop import query_loop
+from services.compact.compact import create_compact_fn
+from utils.abort import AbortController
+
+logger = logging.getLogger(__name__)
 
 
 class Agent:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, permission_prompt_fn=None):
         self.config = config
-        self.session: Session | None = Session(
-            config=config,
-        )
+        self.session: Session | None = Session(config=config)
+        self._permission_prompt_fn = permission_prompt_fn
+        self._abort_controller: AbortController | None = None
+        self._hook_executor: HookExecutor | None = None
+
+    def abort(self):
+        """Cancel the current operation. Called from Ctrl+C handler."""
+        if self._abort_controller:
+            self._abort_controller.abort("interrupt")
 
     async def run(self, message: str):
-        final_content = None
+        """
+        Process a user message through the query loop.
+        Yields AgentEvents for the UI to render in real-time.
+        """
+        self._abort_controller = AbortController()
+
         yield AgentEvent.agent_start(message)
         self.session.context_manager.add_user_message(content=message)
+        self.session.save_message(role="user", content=message)
 
-        async for event in self._agent_loop():
+        # Fire UserPromptSubmit hook
+        if self._hook_executor:
+            await self._hook_executor.run_event_hooks(
+                event=HookEvent.USER_PROMPT_SUBMIT,
+                data={"message": message, "session_id": self.session.session_id},
+            )
+
+        async for event in query_loop(
+            self.session,
+            self.config,
+            permission_prompt_fn=self._permission_prompt_fn,
+            abort_controller=self._abort_controller,
+        ):
             yield event
 
-            if event.type == StreamEventType.MESSAGE_COMPLETE:
-                final_content = event.data.get("content")
-
-        yield AgentEvent.agent_end(final_content)
-
-    # this _agent_loop, will be the multi turn conversations
-    async def _agent_loop(self) -> AsyncGenerator[AgentEvent, None]:
-        max_turns = self.config.max_turns
-
-        for turn_number in range(max_turns):
-            response_text = ""
-            tool_schemas = self.session.tool_registry.get_schemas()
-            tool_calls: list[ToolCall] = []
-            
-            self.session.increment_turn()
-
-            messages = self.session.context_manager.get_message()
-            async for event in self.session.client.chat_completion(
-                messages=messages,
-                tools=tool_schemas if tool_schemas else None,
-                stream=True,
-            ):
-                if event.type == StreamEventType.TEXT_DELTA:
-                    if event.type:
-                        content = event.text_delta.content
-                        response_text += content
-                        yield AgentEvent.text_delta(content)
-
-                elif event.type == StreamEventType.TOOL_CALL_COMPLETED:
-                    if event.tool_call:
-                        tool_calls.append(event.tool_call)
-
-                elif event.type == StreamEventType.ERROR:
-                    yield AgentEvent.agent_error(
-                        event.error or "Unknown error",
-                    )
-
-            self.session.context_manager.add_assistant_message(
-                content=response_text,
-                tool_calls=[
-                    {
-                        "id": tc.call_id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": str(tc.arguments),
-                        },
-                    }
-                    for tc in tool_calls
-                ]
-                if tool_calls
-                else None,
-            )
-            if response_text:
-                yield AgentEvent.text_complete(
-                    content=response_text,
-                )
-
-            if not tool_calls:
-                return
-
-            tool_call_results: list[ToolResultMessage] = []
-
-            for tool_call in tool_calls:
-                yield AgentEvent.tool_call_start(
-                    call_id=tool_call.call_id,
-                    name=tool_call.name,
-                    arguments=tool_call.arguments,
-                )
-
-                result = await self.session.tool_registry.invoke(
-                    name=tool_call.name, params=tool_call.arguments, cwd=self.config.cwd
-                )
-
-                yield AgentEvent.tool_call_complete(
-                    call_id=tool_call.call_id, name=tool_call.name, result=result
-                )
-
-                tool_call_results.append(
-                    ToolResultMessage(
-                        tool_call_id=tool_call.call_id,
-                        content=result.to_model_output(),
-                        is_error=not result.success,
-                    )
-                )
-
-            for tool_result in tool_call_results:
-                self.session.context_manager.add_tool_result(
-                    tool_call_id=tool_result.tool_call_id,
-                    content=tool_result.content,
-                )
+        self._abort_controller = None
+        yield AgentEvent.agent_end()
 
     async def __aenter__(self) -> Agent:
+        await self.session.initialize()
+
+        # Inject compact function (Claude Code: QueryDeps pattern)
+        compact_fn = create_compact_fn(
+            client=self.session.client,
+            model=self.config.model_name,
+        )
+        self.session.context_manager.set_compact_fn(compact_fn)
+
+        # Load hooks from 5-layer settings (Claude Code: settings.json hooks section)
+        from config.settings import extract_hooks_from_settings, load_settings
+        settings = load_settings(str(self.config.cwd))
+        hooks_config = extract_hooks_from_settings(settings)
+
+        # Capture hooks snapshot at startup (Claude Code: immutable at startup)
+        capture_hooks_snapshot(hooks_config if hooks_config else None)
+        self._hook_executor = HookExecutor(get_hooks_from_snapshot())
+
+        # Fire SessionStart hook
+        if self._hook_executor:
+            await self._hook_executor.run_event_hooks(
+                event=HookEvent.SESSION_START,
+                data={
+                    "session_id": self.session.session_id,
+                    "cwd": str(self.config.cwd),
+                    "model": self.config.model_name,
+                },
+            )
+
+        # Fire InstructionsLoaded hook for each AGENT.md file
+        from context.instructions import load_all_instructions
+        instructions = load_all_instructions(str(self.config.cwd))
+        if self._hook_executor and instructions:
+            for instr in instructions:
+                await self._hook_executor.run_event_hooks(
+                    event=HookEvent.INSTRUCTIONS_LOADED,
+                    data={
+                        "file_path": instr.path,
+                        "memory_type": instr.type,
+                        "load_reason": "initial_load",
+                    },
+                )
+
         return self
 
-    async def __aexit__(
-        self,
-        exc_type,
-        exc_val,
-        exc_tb,
-    ) -> None:
-        if self.session.client and self.session:
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        # Fire SessionEnd hook
+        if self._hook_executor:
+            try:
+                await self._hook_executor.run_event_hooks(
+                    event=HookEvent.SESSION_END,
+                    data={
+                        "session_id": self.session.session_id if self.session else "",
+                        "exit_reason": "error" if exc_type else "normal",
+                        "turn_count": self.session._turn_count if self.session else 0,
+                    },
+                )
+            except Exception:
+                pass  # SessionEnd hooks must not prevent cleanup
+
+        # Save final metadata
+        if self.session:
+            self.session._save_metadata()
+
+        if self.session and self.session.client:
             await self.session.client.close()
-            self.session = None
+        if self.session and self.session.mcp_manager:
+            await self.session.mcp_manager.shutdown()
+        self.session = None

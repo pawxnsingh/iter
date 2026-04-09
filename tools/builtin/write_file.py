@@ -1,13 +1,14 @@
+from pydantic import BaseModel, Field
+
 from tools.base import (
+    FileDiff,
     Tool,
+    ToolConfirmation,
     ToolInvocation,
     ToolKind,
     ToolResult,
-    ToolConfirmation,
-    FileDiff,
 )
-from pydantic import BaseModel, Field
-from utils.paths import resolve_path, ensure_parent_directory
+from utils.paths import ensure_parent_directory, resolve_path
 
 
 class WriteFileParams(BaseModel):
@@ -23,16 +24,20 @@ class WriteFileParams(BaseModel):
 
 
 class WriteFileTool(Tool):
-    name = "write_file"
+    name = "Write"
     description = (
-        "Write content to a file. Creates the file if it doesn't exist, "
-        "or overwrites if it does. Parent directories are created automatically. "
-        "Use this for creating new files or completely replacing file contents. "
-        "For partial modifications, use the edit tool instead."
+        "Writes a file to the local filesystem. This tool will overwrite the existing file if "
+        "there is one at the provided path. If this is an existing file, you MUST use the Read "
+        "tool first to read the file's contents. Prefer the Edit tool for modifying existing "
+        "files — it only sends the diff. Only use this tool to create new files or for complete rewrites. "
+        "NEVER create documentation files (*.md) or README files unless explicitly requested."
     )
 
     schema = WriteFileParams
     kind = ToolKind.WRITE
+
+    def get_path(self, params: dict) -> str | None:
+        return params.get("path")
 
     async def get_confirmation(
         self, invocation: ToolInvocation

@@ -1,14 +1,16 @@
+from pathlib import Path
+
+from pydantic import BaseModel, Field
+
 from tools.base import (
+    FileDiff,
     Tool,
+    ToolConfirmation,
     ToolInvocation,
     ToolKind,
     ToolResult,
-    ToolConfirmation,
-    FileDiff,
 )
-from pydantic import BaseModel, Field
-from utils.paths import resolve_path, ensure_parent_directory
-from pathlib import Path
+from utils.paths import ensure_parent_directory, resolve_path
 
 
 class EditParams(BaseModel):
@@ -30,16 +32,20 @@ class EditParams(BaseModel):
 
 
 class EditFileTool(Tool):
-    name = "edit"
+    name = "Edit"
     description = (
-        "Edit a file by replacing text. The old_string must match exactly "
-        "(including whitespace and indentation) and must be unique in the file "
-        "unless replace_all is true. Use this for precise, surgical edits. "
-        "For creating new files or complete rewrites, use write_file instead."
+        "Performs exact string replacements in files. You must use your Read tool at least once "
+        "in the conversation before editing. The edit will FAIL if old_string is not unique in "
+        "the file. Either provide a larger string with more surrounding context to make it unique "
+        "or use replace_all to change every instance of old_string. ALWAYS prefer editing existing "
+        "files in the codebase. NEVER write new files unless explicitly required."
     )
 
     schema = EditParams
     kind = ToolKind.WRITE
+
+    def get_path(self, params: dict) -> str | None:
+        return params.get("path")
 
     async def get_confirmation(
         self, invocation: ToolInvocation
@@ -59,7 +65,7 @@ class EditFileTool(Tool):
         diff = FileDiff(
             path=path,
             old_content=old_content,
-            new_content=params.content,
+            new_content=params.new_string,
             is_new_file=is_new_file,
         )
 

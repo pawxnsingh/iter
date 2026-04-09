@@ -1,3 +1,13 @@
 [model]
 model = "gpt-5.2-chat"
 temperature = 0
+
+
+[mcp_servers.filesystem]
+command = "npx"
+args = [
+    "-y",
+    "@modelcontextprotocol/server-filesystem",
+    "/home/pawxnsingh/coding/Projects/volmorelabs/ai-coding-cli",
+    "/tmp",
+]

@@ -1,9 +1,11 @@
 import asyncio
+from dataclasses import dataclass
 from typing import Any
+
+from pydantic import BaseModel, Field
+
 from config.config import Config
 from tools.base import Tool, ToolInvocation, ToolResult
-from dataclasses import dataclass
-from pydantic import BaseModel, Field
 
 
 class SubagentParams(BaseModel):
@@ -103,7 +105,7 @@ class SubagentTool(Tool):
             error = str(e)
             final_response = f"Sub-agent failed: {e}"
 
-        result = f"""Sub-agent '{self.definition.name}' completed. 
+        result = f"""Sub-agent '{self.definition.name}' completed.
         Termination: {terminate_response}
         Tools called: {", ".join(tool_calls) if tool_calls else "None"}
 
@@ -124,7 +126,7 @@ CODEBASE_INVESTIGATOR = SubagentDefinition(
 Your job is to explore and understand code to answer questions.
 Use read_file, grep, glob, and list_dir to investigate.
 Do NOT modify any files.""",
-    allowed_tools=["read_file", "grep", "glob", "list_dir"],
+    allowed_tools=["Read", "Grep", "Glob", "ListDir"],
 )
 
 
@@ -136,7 +138,7 @@ Your job is to review code and provide constructive feedback.
 Look for bugs, code smells, security issues, and improvement opportunities.
 Use read_file, list_dir and grep to examine the code.
 Do NOT modify any files.""",
-    allowed_tools=["read_file", "grep", "list_dir"],
+    allowed_tools=["Read", "Grep", "ListDir"],
     max_turns=10,
     timeout_seconds=300,
 )

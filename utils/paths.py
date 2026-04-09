@@ -14,12 +14,11 @@ def ensure_parent_directory(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
-def is_binary(path: Path):
+def is_binary(path: str | Path) -> bool:
     try:
         with open(path, "rb") as f:
             chunk = f.read(8192)
             return b"\x00" in chunk
-
     except (OSError, IOError):
         return False
 
@@ -33,16 +32,7 @@ def display_path_rel_to_cwd(path: str, cwd: Path | None) -> str:
     if cwd:
         try:
             return str(p.relative_to(cwd))
-        except ValueError as e:
+        except ValueError:
             pass
 
     return str(p)
-
-
-def is_binary_file(path: str | Path) -> bool:
-    try:
-        with open(path, "rb") as f:
-            chunk = f.read(8192)
-            return b"\x00" in chunk
-    except (OSError, IOError):
-        return False

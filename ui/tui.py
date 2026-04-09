@@ -1,43 +1,52 @@
+"""
+PieAgent TUI — Rich-based, matching Claude Code visual patterns.
+
+Rendering approach:
+  - Tool running: use Rich Live to show animated spinner (replaced on complete)
+  - Tool complete: ● green/red dot + bold name + details + collapsed summary
+  - Assistant text: rendered as Markdown (bold, tables, lists, code)
+  - No duplicate lines (running line gets replaced by complete line via Live)
+"""
+
+import random
+import re
 from pathlib import Path
-
-from rich import box
 from typing import Any
-from config.config import Config
-from rich.rule import Rule
-from rich.text import Text
-from rich.table import Table
-from rich.theme import Theme
-from rich.panel import Panel
-from rich.syntax import Syntax
-from rich.console import Console, Group
-from utils.text import truncate_text
-from utils.paths import display_path_rel_to_cwd
 
+from rich.console import Console
+from rich.live import Live
+from rich.markdown import Markdown
+from rich.spinner import Spinner
+from rich.syntax import Syntax
+from rich.text import Text
+from rich.theme import Theme
+
+from config.config import Config
+
+BLACK_CIRCLE = "●"
+PROMPT_CHAR = "❯"
+CORNER = "⎿"
+INDENT = "     "  # 5 chars to align with text after "  ⎿  "
+
+SPINNER_VERBS = [
+    "Thinking",
+    "Reasoning",
+    "Analyzing",
+    "Processing",
+    "Working",
+    "Crafting",
+    "Evaluating",
+    "Considering",
+]
 
 AGENT_THEME = Theme(
     {
-        # General
-        "info": "cyan",
-        "warning": "yellow",
-        "error": "bright_red bold",
         "success": "green",
+        "error": "bright_red",
+        "warning": "yellow",
         "dim": "dim",
         "muted": "grey50",
-        "border": "grey35",
-        "highlight": "bold cyan",
-        # Roles
-        "user": "bright_blue bold",
-        "assistant": "bright_white",
-        # Tools
-        "tool": "bright_magenta bold",
-        "tool.read": "cyan",
-        "tool.write": "yellow",
-        "tool.shell": "magenta",
-        "tool.network": "bright_blue",
-        "tool.memory": "green",
-        "tool.mcp": "bright_cyan",
-        # Code / blocks
-        "code": "white",
+        "claude": "rgb(215,119,87)",
     }
 )
 
@@ -48,171 +57,164 @@ def get_console() -> Console:
     global _console
     if _console is None:
         _console = Console(theme=AGENT_THEME, highlight=False)
-
     return _console
+
+
+def _dp(path: str, cwd: Path) -> str:
+    try:
+        return str(Path(path).relative_to(cwd))
+    except (ValueError, TypeError):
+        return path or ""
 
 
 class TUI:
     def __init__(self, console: Console | None, config: Config) -> None:
-        self.console = console and get_console()
-        self._assistant_stream_open = False
+        self.console = console or get_console()
+        self._streaming = False
+        self._stream_buffer = ""
         self.config = config
         self.cwd = self.config.cwd
-        self._tool_args_by_call_id: dict[str, dict[str, Any]] = {}
-        self._max_block_tokens = 240
+        self._tool_args: dict[str, dict[str, Any]] = {}
+        self._tool_live: Live | None = None  # For replacing running→complete
+        self._thinking_live: Live | None = None
+
+    # ── Thinking spinner ─────────────────────────────────────────
+
+    def start_thinking_spinner(self):
+        verb = random.choice(SPINNER_VERBS)
+        # Claude Code spinner characters: · ✢ ✳ ✶ ✻ ✽ (forward then reverse)
+        # We register a custom spinner matching Claude Code's SpinnerGlyph
+        from rich.spinner import SPINNERS
+
+        SPINNERS["claude"] = {
+            "interval": 120,
+            "frames": ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"],
+        }
+        self._thinking_live = Live(
+            Spinner("claude", text=f" {verb}...", style="claude"),
+            console=self.console,
+            transient=True,
+            refresh_per_second=10,
+        )
+        try:
+            self._thinking_live.start()
+        except Exception:
+            self._thinking_live = None
+
+    def stop_thinking_spinner(self):
+        if self._thinking_live:
+            try:
+                self._thinking_live.stop()
+            except Exception:
+                pass
+            self._thinking_live = None
+
+    # ── Welcome ──────────────────────────────────────────────────
+
+    def print_welcome(self, title: str, lines: list[str]):
+        """PieAgent branded header with mascot."""
+
+        model_info = lines[0] if len(lines) > 0 else ""
+        cwd_info = lines[1] if len(lines) > 1 else ""
+
+        self.console.print()
+        self.console.print(Text.assemble(("   ",""), ("▄▄▄▄▄▄▄▄","claude"),("   ",""),  (f"{title}","bold claude"), (" v0.1.0","dim")))
+        self.console.print(f"   [claude]██▀▀▀▀██[/claude]   [dim]{model_info}[/dim]")
+        self.console.print(f"   [claude]██▄▄▄▄██[/claude]   [dim]{cwd_info}[/dim]")
+        self.console.print("   [claude]▀▀▀▀▀▀▀▀[/claude]   [dim]? for shortcuts · /help for commands[/dim]")
+        self.console.print()
+
+    # ── Assistant text ────────────────────────────────────────────
 
     def begin_assistant(self):
         self.console.print()
-        self.console.print(Rule(Text("Assistant"), style="assistant"))
-        self._assistant_stream_open = True
+        self._streaming = True
+        self._stream_buffer = ""
 
     def end_assistant(self):
-        if self._assistant_stream_open:
-            self.console.print()
-        self._assistant_stream_open = False
+        if self._streaming and self._stream_buffer:
+            self._render_assistant(self._stream_buffer)
+        self._streaming = False
+        self._stream_buffer = ""
 
     def stream_assistant_delta(self, content: str) -> None:
-        self.console.print(content, end="", markup=False)
+        if self._streaming:
+            self._stream_buffer += content
 
-    def _guess_language(self, path: str | None) -> str:
-        if not path:
-            return "text"
-        suffix = Path(path).suffix.lower()
-
-        return {
-            ".py": "python",
-            ".js": "javascript",
-            ".jsx": "jsx",
-            ".ts": "typescript",
-            ".tsx": "tsx",
-            ".json": "json",
-            ".toml": "toml",
-            ".yaml": "yaml",
-            ".yml": "yaml",
-            ".md": "markdown",
-            ".sh": "bash",
-            ".bash": "bash",
-            ".zsh": "bash",
-            ".rs": "rust",
-            ".go": "go",
-            ".java": "java",
-            ".kt": "kotlin",
-            ".swift": "swift",
-            ".c": "c",
-            ".h": "c",
-            ".cpp": "cpp",
-            ".hpp": "cpp",
-            ".css": "css",
-            ".html": "html",
-            ".xml": "xml",
-            ".sql": "sql",
-        }.get(suffix, "text")
-
-    def print_welcome(self, title: str, lines: list[str]):
-        body = "\n".join(lines)
-        panel = Panel(
-            renderable=Text(body, style="code"),
-            title=Text(title, style="highlight"),
-            box=box.ROUNDED,
-            border_style="border",
-            title_align="left",
-            padding=(1, 2),
+    def _render_assistant(self, text: str) -> None:
+        """Render assistant response as Markdown with ⎿ ● prefix."""
+        # Print the ⎿ ● prefix on its own line
+        self.console.print(
+            Text.assemble(
+                (f"  {CORNER}  ", "dim"),
+                (f"{BLACK_CIRCLE} ", "success"),
+            ),
+            end="",
         )
 
-        self.console.print(panel)
+        # Check if text has code blocks — split and render separately
+        code_pattern = re.compile(r"```(\w*)\n([\s\S]*?)```")
 
-    def _ordered_args(self, tool_name: str, args: dict[str, Any]) -> list[tuple]:
-        _PREFERED_ORDER = {
-            "read_file": ["path", "offset", "limit"],
-            "write_file": ["path", "create_directories", "content"],
-            "edit": ["path", "replace_all", "old_string", "new_string"],
-            "shell": ["command", "timeout", "cwd"],
-            "list_dir": ["path", "include_hidden"],
-            "grep": ["pattern", "case_insensitive", "path"],
-            "glob": ["pattern", "path"],
-            "web_search": ["query", "max_results"],
-            "web_fetch": ["url", "timeout"],
-            "todos": ["id", "action", "content"],
-            "memory": ["action", "key", "value"],
-        }
+        if code_pattern.search(text):
+            # Has code blocks — render in parts
+            last_end = 0
+            first = True
+            for match in code_pattern.finditer(text):
+                # Text before code block
+                before = text[last_end : match.start()].strip()
+                if before:
+                    if first:
+                        # First text chunk goes on same line as ●
+                        self.console.print(Markdown(before))
+                        first = False
+                    else:
+                        self.console.print(Markdown(before))
 
-        prefered = _PREFERED_ORDER.get(tool_name, list(args.keys()))
-        ordered: list[tuple[str, Any]] = []
-        seen = set()
+                # Code block — render as syntax
+                lang = match.group(1) or "text"
+                code = match.group(2).strip()
+                if code:
+                    self.console.print(
+                        Syntax(code, lang, theme="monokai", padding=(0, 0, 0, 4))
+                    )
 
-        for key in prefered:
-            if key in args:
-                ordered.append((key, args[key]))
-                seen.add(key)
+                last_end = match.end()
 
-        remaining_keys = set(args.keys() - seen)
-        ordered.extend((key, args[key]) for key in remaining_keys)
+            # Text after last code block
+            after = text[last_end:].strip()
+            if after:
+                self.console.print(Markdown(after))
+        else:
+            # No code blocks — render entire text as Markdown
+            self.console.print(Markdown(text))
 
-        return ordered
-
-    def _render_args_table(self, tool_name: str, args: dict[str, Any]) -> Table:
-        table = Table.grid(padding=(0, 1))
-        # first we added columns, and then we wrote the rows
-        table.add_column(style="muted", justify="right", no_wrap=True)
-        table.add_column(style="code", overflow="fold")
-
-        for key, value in self._ordered_args(tool_name, args):
-            if key in {"content", "old_string", "new_string"}:
-                line_count = len(value.splitlines()) or 0
-                byte_count = len(value.encode("utf-8", errors="replace"))
-
-                value = f"<{line_count} lines • {byte_count} bytes>"
-
-            # rich.Table expects renderable values (strings, Text, etc.).
-            # Convert non-string scalar values to string to avoid NotRenderableError.
-            if not isinstance(value, (str, Text)):
-                value = str(value)
-
-            table.add_row(key, value)
-
-        return table
+    # ── Tool call start ──────────────────────────────────────────
+    # Use Rich Live so the running line gets REPLACED by the complete line
 
     def tool_call_start(
-        self,
-        call_id: str,
-        name: str,
-        tool_kind: str | None,
-        arguments: dict[str, Any],
+        self, call_id: str, name: str, tool_kind: str | None, arguments: dict[str, Any]
     ):
-        self._tool_args_by_call_id[call_id] = arguments
-        border_style = f"tool.{tool_kind}" if tool_kind else "tool"
+        self._tool_args[call_id] = arguments
+        ufn = self._ufn(name, arguments)
+        details = self._details(name, arguments)
+        desc = f"{ufn}({details})" if details else ufn
 
-        title = Text.assemble(
-            ("⏺ ", "muted"),
-            (name, "tool"),
-            ("  ", "muted"),
-            (f"#{call_id.split('_')[1]}", "muted"),
+        # Start a Live display that will be replaced by tool_call_complete
+        running_text = Text.assemble(
+            (f"  {CORNER}  ", "dim"),
+            (f"{BLACK_CIRCLE} ", "dim"),
+            (desc, "dim"),
         )
+        self._tool_live = Live(running_text, console=self.console, transient=True)
+        try:
+            self._tool_live.start()
+        except Exception:
+            self._tool_live = None
+            # Fallback: just print dim line
+            self.console.print(running_text)
 
-        display_args = dict(arguments)
-        for key in ("path", "cwd"):
-            val = display_args.get(key)
-            if isinstance(val, str):
-                display_args[key] = str(display_path_rel_to_cwd(val, self.cwd))
-
-        panel = Panel(
-            self._render_args_table(name, display_args)
-            if display_args
-            else Text("(no args)", style="muted"),
-            title=title,
-            title_align="left",
-            padding=(1, 2),
-            border_style=border_style,
-            box=box.ROUNDED,
-            subtitle=Text("running", "muted"),
-            subtitle_align="right",
-        )
-
-        self.console.print()
-        self.console.print(panel)
-
-    def _extract_read_file_code(self, text: str):
-        return text
+    # ── Tool call complete ───────────────────────────────────────
+    # Replace the running line with the completed line
 
     def tool_call_complete(
         self,
@@ -227,305 +229,141 @@ class TUI:
         truncated: bool,
         exit_code: int | None,
     ):
-        border_style = f"tool.{tool_kind}" if tool_kind else "tool"
-        status_icon = "✓" if success else "✗"
-        status_style = "success" if success else "error"
+        # Stop the running Live display
+        if self._tool_live:
+            try:
+                self._tool_live.stop()
+            except Exception:
+                pass
+            self._tool_live = None
 
-        args = self._tool_args_by_call_id.get(call_id, {})
+        args = self._tool_args.get(call_id, {})
+        dot = "success" if success else "error"
+        ufn = self._ufn(name, args)
+        details = self._details(name, args)
 
-        primary_path = None
-        blocks = []
-        if isinstance(metadata, dict) and isinstance(metadata.get("path"), str):
-            primary_path = metadata.get("path")
+        # ⎿  ● ToolName(details) — single completed line
+        parts = [
+            (f"  {CORNER}  ", "dim"),
+            (f"{BLACK_CIRCLE} ", dot),
+            (ufn, "bold"),
+        ]
+        if details:
+            parts.append((f"({details})", ""))
+        self.console.print(Text.assemble(*parts))
 
-        title = Text.assemble(
-            (f"{status_icon} ", status_style),
-            (name, "tool"),
-            ("  ", "muted"),
-            (f"#{call_id.split('_')[1]}", "muted"),
-        )
-
-        if name == "read_file" and success:
-            if primary_path:
-                path = metadata.get("path", "")
-                shown_start = metadata.get("shown_start")
-                shown_end = metadata.get("shown_end")
-                total_lines = metadata.get("total_lines")
-                output = self._extract_read_file_code(text=output)
-                lexer = self._guess_language(path)
-
-                # block.append(Text())
-
-                header_parts = [display_path_rel_to_cwd(path=path, cwd=self.cwd)]
-                header_parts.append(" * ")
-
-                if shown_start and shown_end and total_lines:
-                    header_parts.append(
-                        f"lines {shown_start}-{shown_end} of {total_lines}"
-                    )
-
-                header = "".join(header_parts)
-
-                blocks.append(Text(text=header, style="muted"))
-                blocks.append(Syntax(code=output, lexer=lexer, theme="monokai"))
-
-            else:
-                output_display = truncate_text(
-                    text=output,
-                    max_tokens=self._max_block_tokens,
-                    model=self.config.model_name,
-                )
-                blocks.append(
-                    Syntax(
-                        output_display,
-                        "text",
-                        theme="monokai",
-                        word_wrap=False,
-                    )
-                )
-
-        elif name in {"write_file", "edit"} and success and diff:
-            output_line = output.strip() if output.strip() else "Completed"
-            blocks.append(Text(output_line, style="muted"))
-            diff_text = diff
-
-            diff_display = truncate_text(
-                text=diff_text,
-                model=self.config.model_name,
-                max_tokens=self._max_block_tokens,
-            )
-
-            blocks.append(
-                Syntax(
-                    diff_display,
-                    "diff",
-                    theme="monokai",
-                    word_wrap=True,
-                )
-            )
-
-        elif name in "shell":
-            commands = args.get("commands")
-            if isinstance(commands, str) and commands.strip():
-                blocks.append(Text(f"$ {commands.strip()}", style="muted"))
-
-            if exit_code is not None:
-                blocks.append(Text(f"exit_code={str(exit_code)}", style="muted"))
-
-            output_display = truncate_text(
-                text=output,
-                model=self.config.model_name,
-                max_tokens=self._max_block_tokens,
-            )
-
-            blocks.append(
-                Syntax(
-                    output_display,
-                    "text",
-                    theme="monokai",
-                    word_wrap=True,
-                )
-            )
-
-        elif name == "list_dir" and success:
-            entries = metadata.get("entries")
-            path = metadata.get("path")
-            summary = []
-            if isinstance(path, str):
-                summary.append(path)
-
-            if isinstance(entries, int):
-                summary.append(f"{entries} entries")
-
-            if summary:
-                blocks.append(Text(" • ".join(summary), style="muted"))
-
-            output_display = truncate_text(
-                text=output,
-                model=self.config.model_name,
-                max_tokens=self._max_block_tokens,
-            )
-            blocks.append(
-                Syntax(
-                    output_display,
-                    "text",
-                    theme="monokai",
-                    word_wrap=True,
-                )
-            )
-
-        elif name == "grep" and success:
-            matches = metadata.get("matches")
-            files_searched = metadata.get("files_searched")
-            summary = []
-            if isinstance(matches, int):
-                summary.append(f"{matches} matches")
-            if isinstance(files_searched, int):
-                summary.append(f"searched {files_searched} files")
-
-            if summary:
-                blocks.append(Text(" • ".join(summary), style="muted"))
-
-            output_display = truncate_text(
-                text=output,
-                model=self.config.model_name,
-                max_tokens=self._max_block_tokens,
-            )
-            blocks.append(
-                Syntax(
-                    output_display,
-                    "text",
-                    theme="monokai",
-                    word_wrap=True,
-                )
-            )
-        elif name == "glob" and success:
-            matches = metadata.get("matches")
-            if isinstance(matches, int):
-                blocks.append(Text(f"{matches} matches", style="muted"))
-
-            output_display = truncate_text(
-                text=output,
-                model=self.config.model_name,
-                max_tokens=self._max_block_tokens,
-            )
-            blocks.append(
-                Syntax(
-                    output_display,
-                    "text",
-                    theme="monokai",
-                    word_wrap=True,
-                )
-            )
-        elif name == "web_search" and success:
-            results = metadata.get("results")
-            query = args.get("query")
-            summary = []
-            if isinstance(query, str):
-                summary.append(query)
-            if isinstance(results, int):
-                summary.append(f"{results} results")
-
-            if summary:
-                blocks.append(Text(" • ".join(summary), style="muted"))
-
-            output_display = truncate_text(
-                text=output,
-                model=self.config.model_name,
-                max_tokens=self._max_block_tokens,
-            )
-            blocks.append(
-                Syntax(
-                    output_display,
-                    "text",
-                    theme="monokai",
-                    word_wrap=True,
-                )
-            )
-        elif name == "web_fetch" and success:
-            status_code = metadata.get("status_code")
-            content_length = metadata.get("content_length")
-            url = args.get("url")
-            summary = []
-            if isinstance(status_code, int):
-                summary.append(str(status_code))
-            if isinstance(content_length, int):
-                summary.append(f"{content_length} bytes")
-            if isinstance(url, str):
-                summary.append(url)
-
-            if summary:
-                blocks.append(Text(" • ".join(summary), style="muted"))
-
-            output_display = truncate_text(
-                text=output,
-                model=self.config.model_name,
-                max_tokens=self._max_block_tokens,
-            )
-            blocks.append(
-                Syntax(
-                    output_display,
-                    "text",
-                    theme="monokai",
-                    word_wrap=True,
-                )
-            )
-        elif name == "todos" and success:
-            output_display = truncate_text(
-                text=output,
-                model=self.config.model_name,
-                max_tokens=self._max_block_tokens,
-            )
-            blocks.append(
-                Syntax(
-                    output_display,
-                    "text",
-                    theme="monokai",
-                    word_wrap=True,
-                )
-            )
-        elif name == "memory" and success:
-            action = args.get("action")
-            key = args.get("key")
-            found = metadata.get("found")
-            summary = []
-            if isinstance(action, str) and action:
-                summary.append(action)
-            if isinstance(key, str) and key:
-                summary.append(key)
-            if isinstance(found, bool):
-                summary.append("found" if found else "missing")
-
-            if summary:
-                blocks.append(Text(" • ".join(summary), style="muted"))
-            output_display = truncate_text(
-                text=output,
-                model=self.config.model_name,
-                max_tokens=self._max_block_tokens,
-            )
-            blocks.append(
-                Syntax(
-                    output_display,
-                    "text",
-                    theme="monokai",
-                    word_wrap=True,
-                )
-            )
-
+        # Collapsed summary (Claude Code hides output by default)
+        # Use Text() for error/summary to prevent Rich markup injection
+        from rich.markup import escape
+        if not success and error:
+            self.console.print(Text(f"{INDENT}  {escape(error)}", style="error"))
+        elif diff and name in ("Edit", "Write"):
+            self._render_code(diff, "diff")
+        elif name == "Bash" and exit_code and exit_code != 0:
+            self._render_code(output, "text")
         else:
-            if error and not success:
-                blocks.append(Text(error, style="error"))
-
-            output_display = truncate_text(
-                text=output,
-                model=self.config.model_name,
-                max_tokens=self._max_block_tokens,
-            )
-            if output_display.strip():
-                blocks.append(
-                    Syntax(
-                        output_display,
-                        "text",
-                        theme="monokai",
-                        word_wrap=True,
-                    )
-                )
-            else:
-                blocks.append(Text("(no output)", style="muted"))
+            summary = self._summary(name, metadata, output)
+            if summary:
+                self.console.print(Text(f"{INDENT}  {summary}", style="dim"))
 
         if truncated:
-            blocks.append(Text("note: tool output was truncated", style="warning"))
+            self.console.print(f"{INDENT}  [warning]… truncated[/warning]")
 
-        panel = Panel(
-            renderable=Group(*blocks),
-            title=title,
-            title_align="left",
-            padding=(1, 2),
-            border_style=border_style,
-            box=box.ROUNDED,
-            subtitle=Text("success" if success else "failed", status_style),
-            subtitle_align="right",
+    # ── Permission dialog ────────────────────────────────────────
+
+    def show_permission_dialog(
+        self, tool_name: str, description: str, is_destructive: bool = False
+    ) -> bool:
+        self.console.print()
+        style = "bold error" if is_destructive else "bold"
+        self.console.print(f"  [{style}]{tool_name}[/{style}]")
+        self.console.print(f"{INDENT}  [dim]{description}[/dim]")
+        self.console.print()
+        self.console.print("  [bold]This command requires approval[/bold]")
+        self.console.print("  Do you want to proceed?")
+        self.console.print(f"  [bold]{PROMPT_CHAR}[/bold] 1. Yes")
+        self.console.print("    2. Yes, and don't ask again")
+        self.console.print("    3. No")
+        self.console.print()
+        self.console.print("  [dim]Esc to cancel · Tab to amend[/dim]")
+        try:
+            return self.console.input("  ").strip() in ("1", "y", "yes", "2")
+        except (KeyboardInterrupt, EOFError):
+            return False
+
+    # ── Helpers ───────────────────────────────────────────────────
+
+    def _ufn(self, name: str, args: dict[str, Any]) -> str:
+        return {
+            "Read": "Reading",
+            "Edit": "Update",
+            "Write": "Write",
+            "Bash": "Bash",
+            "Grep": "Search",
+            "Glob": "Search",
+            "ListDir": "List",
+            "WebSearch": "WebSearch",
+            "WebFetch": "WebFetch",
+        }.get(name, name)
+
+    def _details(self, name: str, args: dict[str, Any]) -> str:
+        match name:
+            case "Read" | "Edit" | "Write":
+                return _dp(args.get("path", ""), self.cwd)
+            case "Bash":
+                d = args.get("description", "")
+                if d:
+                    return d[:80]
+                c = args.get("command", "")
+                return c[:80] + ("…" if len(c) > 80 else "")
+            case "Grep":
+                p = [f'pattern: "{args.get("pattern", "")}"']
+                path = args.get("path")
+                if path and path != ".":
+                    p.append(f'path: "{_dp(path, self.cwd)}"')
+                return ", ".join(p)
+            case "Glob":
+                return f'pattern: "{args.get("pattern", "")}"'
+            case "ListDir":
+                return _dp(args.get("path", "."), self.cwd)
+            case "WebSearch":
+                return args.get("query", "")
+            case "WebFetch":
+                return args.get("url", "")[:60]
+            case _:
+                return ""
+
+    def _summary(self, name: str, meta: dict[str, Any], output: str) -> str:
+        match name:
+            case "Read":
+                t = meta.get("total_lines")
+                return (
+                    f"Read {_dp(meta.get('path', ''), self.cwd)} ({t} lines)"
+                    if t
+                    else ""
+                )
+            case "ListDir":
+                return f"Listed {meta.get('entries', 0)} items"
+            case "Grep":
+                return f"Found {meta.get('matches', 0)} results"
+            case "Glob":
+                return f"Found {meta.get('matches', 0)} files"
+            case "Bash":
+                n = len(output.strip().split("\n")) if output.strip() else 0
+                return f"Ran successfully ({n} lines)" if n else "Ran successfully"
+            case "WebSearch":
+                return f"Found {meta.get('results', 0)} results"
+            case "WebFetch":
+                s = meta.get("content_length", 0)
+                return f"Fetched {s:,} bytes" if s else "Fetched"
+            case _:
+                return ""
+
+    def _render_code(self, output: str, lang: str):
+        lines = output.strip().split("\n")
+        if len(lines) > 20:
+            lines = lines[:20] + [f"… [{len(lines)} total lines]"]
+        self.console.print(
+            Syntax("\n".join(lines), lang, theme="monokai", padding=(0, 0, 0, 6))
         )
 
-        self.console.print()
-        self.console.print(panel)

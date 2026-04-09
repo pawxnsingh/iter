@@ -1,11 +1,11 @@
-from tools.base import Tool, ToolResult, ToolInvocation
-from typing import Any
-from config.config import Config
 import logging
 from pathlib import Path
+from typing import Any
+
+from config.config import Config
+from tools.base import Tool, ToolInvocation, ToolResult
 from tools.builtin import get_all_builtin_tools
-from tools.subagents import get_default_subagent_definitions
-from tools.subagents import SubagentTool
+from tools.subagents import SubagentTool, get_default_subagent_definitions
 
 logger = logging.getLogger(__name__)
 
@@ -13,14 +13,19 @@ logger = logging.getLogger(__name__)
 class ToolRegistry:
     def __init__(self, config: Config):
         self._tools: dict[str, Any] = {}
+        self._mcp_tools: dict[str, Any] = {}
         self.config = config
 
     def register(self, tool: Tool) -> None:
         if tool.name in self._tools:
-            logger.warning(f"overwriting the existing tool: {tool.name}")
+            logger.debug(f"replacing tool: {tool.name}")
 
         self._tools[tool.name] = tool
         logger.debug(f"tool got registered successfully: {tool.name}")
+
+    def register_mcp_tool(self, tool: Tool) -> None:
+        self._tools[tool.name] = tool
+        logger.debug(f"MCP tool got registered successfully: {tool.name}")
 
     def unregister(self, name: str) -> bool:
         if name in self._tools:
@@ -34,6 +39,9 @@ class ToolRegistry:
         for tool in self._tools.values():
             tools.append(tool)
 
+        for mcp_tool in self._mcp_tools.values():
+            tools.append(mcp_tool)
+
         if self.config.allowed_tools:
             allowed_set = set(self.config.allowed_tools)
             tools = [t for t in tools if t.name in allowed_set]
@@ -46,6 +54,9 @@ class ToolRegistry:
     ) -> Tool | None:
         if name in self._tools:
             return self._tools[name]
+
+        if name in self._mcp_tools:
+            return self._mcp_tools[name]
 
         return None
 
@@ -84,6 +95,17 @@ class ToolRegistry:
                 metadata={"tool_name": name},
             )
 
+        # Enforce max result size (Claude Code pattern: maxResultSizeChars per tool)
+        if len(result.output) > tool.max_result_size_chars:
+            result = ToolResult(
+                success=result.success,
+                output=result.output[:tool.max_result_size_chars] + "\n... [output truncated]",
+                error=result.error,
+                truncated=True,
+                metadata=result.metadata,
+                exit_code=result.exit_code,
+            )
+
         return result
 
     def get_schemas(self) -> list[dict[str, Any]]:
@@ -91,7 +113,7 @@ class ToolRegistry:
 
 
 def create_default_registry(config: Config) -> ToolRegistry:
-    tool_registry = ToolRegistry(config=config )
+    tool_registry = ToolRegistry(config=config)
 
     for tool_class in get_all_builtin_tools():
         tool_registry.register(tool_class(config=config))

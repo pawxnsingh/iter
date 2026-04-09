@@ -1,10 +1,12 @@
+import logging
 from pathlib import Path
+from tomllib import TOMLDecodeError, load
+from typing import Any
+
+from platformdirs import user_config_dir, user_data_dir
+
 from config.config import Config
 from utils.errors import ConfigError
-from platformdirs import user_config_dir, user_data_dir
-from typing import Any
-from tomllib import TOMLDecodeError, load
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,10 @@ def get_config_path() -> Path:
 
 def get_system_config_path() -> Path:
     return get_config_path() / CONFIG_FILE_NAME
+
+
+def get_config_dir() -> Path:
+    return Path(user_config_dir("ai-agent"))
 
 
 def get_data_dir() -> Path:

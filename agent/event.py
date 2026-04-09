@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -44,7 +45,7 @@ class AgentEvent:
         return cls(
             type=AgentEventType.AGENT_END,
             data={
-                "reponse": response,
+                "response": response,
                 "usage": usage.__dict__ if usage else None,
             },
         )
