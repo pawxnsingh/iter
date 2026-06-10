@@ -8,7 +8,9 @@ and replaced with a preview + file path. This prevents large results
 from consuming the entire context window.
 
 Constants (from Claude Code):
-  DEFAULT_MAX_RESULT_SIZE_CHARS = 50,000
+  DEFAULT_MAX_RESULT_SIZE_CHARS = 100,000  (CC's common per-tool value; the
+      real cap is per-tool via Tool.max_result_size_chars — Grep 20k, Bash 30k.
+      This fallback only applies if a caller omits max_chars.)
   MAX_TOOL_RESULT_BYTES = 400,000
   PREVIEW_SIZE_BYTES = 2,000
 """
@@ -20,7 +22,10 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_RESULT_SIZE_CHARS = 50_000
+# Aligned with Tool.max_result_size_chars default (100k) — the previous 50k
+# was never actually used (truncate_tool_result always passes the tool's value)
+# and only created a confusing mismatch.
+DEFAULT_MAX_RESULT_SIZE_CHARS = 100_000
 MAX_TOOL_RESULT_BYTES = 400_000
 PREVIEW_SIZE_BYTES = 2_000
 

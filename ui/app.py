@@ -1,5 +1,5 @@
 """
-PieAgentApp — Textual app entry point.
+NewtApp — Textual app entry point.
 
 Mirrors toad/app.py at a much smaller scale:
   - Single MainScreen (no MODES yet — multi-session can be added later).
@@ -36,9 +36,9 @@ DRACULA_TERMINAL_THEME = terminal_theme.TerminalTheme(
 )
 
 
-class PieAgentApp(App):
+class NewtApp(App):
     CSS_PATH = "app.tcss"
-    TITLE = "PieAgent"
+    TITLE = "Newt"
     SUB_TITLE = ""
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -64,6 +64,6 @@ class PieAgentApp(App):
 
 def run_tui(config: Config) -> int:
     """Blocking entry point — used by main.py when --tui is passed."""
-    app = PieAgentApp(config)
+    app = NewtApp(config)
     app.run()
     return 0

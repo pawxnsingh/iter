@@ -33,25 +33,25 @@ def snip_compact_if_needed(
     messages: list[MessageItem],
     context_window: int,
     model: str = "",
-) -> tuple[list[MessageItem], int]:
+) -> list[MessageItem]:
     """
-    Remove oldest message groups if over threshold.
+    Remove oldest message groups if over the autocompact threshold.
 
-    Returns: (messages, tokens_freed)
+    Lossless removal — drops whole turns from the start. Cheapest of the
+    compaction strategies. Returns the (possibly shorter) message list.
     """
     threshold = get_auto_compact_threshold(context_window)
     current_tokens = estimate_messages_tokens(messages, model)
 
     if current_tokens < threshold:
-        return messages, 0
+        return messages
 
     # Group messages by turns (user + assistant + tool results = one group)
     groups = _group_by_turn(messages)
 
     if len(groups) <= MIN_GROUPS_TO_KEEP:
-        return messages, 0
+        return messages
 
-    # Drop oldest groups until under threshold
     tokens_freed = 0
     groups_dropped = 0
 
@@ -65,19 +65,20 @@ def snip_compact_if_needed(
         groups_dropped += 1
         tokens_freed += group_tokens
 
-        remaining_tokens = current_tokens - tokens_freed
-        if remaining_tokens < threshold:
+        if current_tokens - tokens_freed < threshold:
             break
 
     if groups_dropped > 0:
-        logger.info(f"Snip compact: dropped {groups_dropped} groups, freed {tokens_freed} tokens")
+        logger.info(
+            f"Snip compact: dropped {groups_dropped} groups, freed {tokens_freed} tokens"
+        )
 
     # Flatten groups back to message list
     result = []
     for group in groups:
         result.extend(group)
 
-    return result, tokens_freed
+    return result
 
 
 def _group_by_turn(messages: list[MessageItem]) -> list[list[MessageItem]]:

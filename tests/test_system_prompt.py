@@ -2,14 +2,14 @@
 
 from config.config import Config
 from prompts.system import get_system_prompt
-from tools.builtin.read_file import ReadFileTool
-from tools.builtin.shell import ShellTool
+from tools.builtin.FileReadTool import FileReadTool
+from tools.builtin.BashTool import BashTool
 
 config = Config()
 
 
 def test_all_sections_present():
-    tools = [ReadFileTool(config), ShellTool(config)]
+    tools = [FileReadTool(config), BashTool(config)]
     prompt = get_system_prompt(config, None, tools)
 
     sections = [
@@ -26,7 +26,7 @@ def test_all_sections_present():
 
 
 def test_tool_guidance():
-    tools = [ReadFileTool(config)]
+    tools = [FileReadTool(config)]
     prompt = get_system_prompt(config, None, tools)
     assert "Read instead of cat" in prompt
     assert "Edit instead of sed" in prompt

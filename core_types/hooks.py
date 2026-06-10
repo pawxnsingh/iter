@@ -12,10 +12,17 @@ from typing import Any
 
 
 class HookEvent(str, Enum):
-    """All 27 hook events from Claude Code."""
+    """All 28 hook events (27 from Claude Code + POST_SAMPLING).
+
+    POST_SAMPLING fires after the model has produced a complete assistant
+    message but BEFORE we run any of the requested tools. Lets external
+    observers (logging, tracing, content filters) see the full reply
+    without being on the hot path of tool execution.
+    """
     PRE_TOOL_USE = "PreToolUse"
     POST_TOOL_USE = "PostToolUse"
     POST_TOOL_USE_FAILURE = "PostToolUseFailure"
+    POST_SAMPLING = "PostSampling"
     USER_PROMPT_SUBMIT = "UserPromptSubmit"
     NOTIFICATION = "Notification"
     SESSION_START = "SessionStart"

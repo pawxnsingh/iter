@@ -13,8 +13,7 @@ import asyncio
 
 class AbortController:
     """
-    Cancellation controller. Mirrors browser/Node AbortController pattern
-    used by Claude Code's toolUseContext.abortController.
+    Cancellation controller. 
     """
 
     def __init__(self):

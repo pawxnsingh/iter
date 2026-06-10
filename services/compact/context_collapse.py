@@ -25,6 +25,7 @@ from services.compact.auto_compact import (
     estimate_messages_tokens,
     get_auto_compact_threshold,
 )
+from utils.text import estimate_token
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ def _collapse_tool_results(
                 content=collapsed_content,
                 tool_call_id=msg.tool_call_id,
                 tool_calls=msg.tool_calls,
-                token_count=len(collapsed_content) // 4,
+                token_count=estimate_token(collapsed_content),
                 turn_number=msg.turn_number,
             ))
         else:
@@ -127,7 +128,7 @@ def _collapse_assistant_messages(
                 role=msg.role,
                 content=collapsed,
                 tool_calls=msg.tool_calls,
-                token_count=len(collapsed) // 4,
+                token_count=estimate_token(collapsed),
                 turn_number=msg.turn_number,
             ))
         else:

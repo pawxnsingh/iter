@@ -15,17 +15,6 @@ Rules (from Claude Code):
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
-
-
-@runtime_checkable
-class MessageLike(Protocol):
-    """Any object with role, content, tool_call_id, tool_calls fields."""
-    role: str
-    content: str
-    tool_call_id: str | None
-    tool_calls: list[dict[str, Any]]
-
 # Claude Code: TIME_BASED_MC_CLEARED_MESSAGE
 CLEARED_MESSAGE = "[Old tool result content cleared]"
 

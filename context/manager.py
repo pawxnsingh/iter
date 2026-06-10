@@ -1,8 +1,10 @@
 """
 Context Manager: Manages conversation history with compaction.
 
-This is the central message store. The query loop calls get_message()
-before every API call, which triggers compaction if needed.
+This is the central message store. The query loop calls
+get_messages_with_compaction() before every API call, which runs the full
+compaction pipeline (microcompact → collapse → autocompact → tool-result
+budget) and returns the API message list.
 
 Claude Code equivalent: The message management spread across query.ts
 (compaction orchestration) and the REPL's message array.
@@ -17,6 +19,7 @@ from prompts.system import get_system_prompt
 from services.compact.auto_compact import (
     AutoCompactTracking,
     auto_compact_if_needed,
+    calculate_token_warning_state,
     estimate_messages_tokens,
     get_auto_compact_threshold,
 )
@@ -35,6 +38,10 @@ class MessageItem:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     token_count: int | None = None
     turn_number: int = 0
+    # Image attachments (base64) for multimodal user messages. Each entry:
+    # {"media_type": str, "data": base64-str}. When present, to_dict() emits
+    # OpenAI-style multimodal content (text + image_url blocks).
+    images: list[dict[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {"role": self.role}
@@ -45,7 +52,21 @@ class MessageItem:
         if self.tool_calls:
             result["tool_calls"] = self.tool_calls
 
-        if self.content:
+        if self.images:
+            # Multimodal content: text part (if any) + image_url blocks. The
+            # Anthropic provider path remaps image_url → image blocks.
+            parts: list[dict[str, Any]] = []
+            if self.content:
+                parts.append({"type": "text", "text": self.content})
+            for img in self.images:
+                parts.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{img['media_type']};base64,{img['data']}"
+                    },
+                })
+            result["content"] = parts
+        elif self.content:
             result["content"] = self.content
 
         return result
@@ -86,6 +107,15 @@ class ContextManager:
     def system_prompt(self) -> str:
         return self._system_prompt
 
+    def set_system_prompt(self, prompt: str) -> None:
+        """Override the assembled system prompt.
+
+        Used when spawning a subagent: the agent's specialized instructions
+        (Explore's read-only rules, Plan's planning rules, etc.) are its system
+        prompt, appended to the base prompt by AgentTool.
+        """
+        self._system_prompt = prompt
+
     def set_turn(self, turn: int) -> None:
         self._turn_number = turn
 
@@ -93,6 +123,23 @@ class ContextManager:
         item = MessageItem(
             role="user",
             content=content or "",
+            token_count=count_tokens(content, model=self._model_name),
+            turn_number=self._turn_number,
+        )
+        self._messages.append(item)
+
+    def add_image_message(self, images: list[dict[str, str]], content: str = "") -> None:
+        """Append a user message carrying image attachments.
+
+        OpenAI/Azure accept image blocks only in user messages (not tool
+        messages), so after a tool returns an image we surface it as a follow-up
+        user message. Mirrors CC's image tool_result, adapted to the OpenAI
+        message shape our provider uses.
+        """
+        item = MessageItem(
+            role="user",
+            content=content,
+            images=images,
             token_count=count_tokens(content, model=self._model_name),
             turn_number=self._turn_number,
         )
@@ -128,21 +175,43 @@ class ContextManager:
 
     async def get_messages_with_compaction(self) -> list[dict[str, Any]]:
         """
-        Get messages for API call, applying compaction first.
+        Run the compaction pipeline and return the API message list.
 
-        This is the Claude Code pattern:
-          1. Microcompact (cheap — clear old tool results)
-          2. Autocompact (expensive — summarize if over threshold)
-          3. Return system prompt + compacted messages
+        Phase order matches Claude Code (query.ts ~396-468):
+
+          1. snip                  — lossless removal of oldest message groups
+          2. microcompact          — clear stale tool results (zero cost)
+          3. context_collapse      — merge adjacent same-role + collapse old
+                                     tool calls. Runs BEFORE autocompact so
+                                     that if collapse frees enough, autocompact
+                                     becomes a no-op and we keep granular
+                                     context instead of a lossy summary.
+          4. autocompact           — LLM summarisation if still over threshold.
+          5. apply_tool_result_budget — cap aggregate tool result bytes.
 
         Called before every LLM API call.
         """
-        # Step 1: Microcompact (always runs, zero cost)
+        # Lazy imports: snip_compact and context_collapse both import
+        # MessageItem from this module, so top-level imports here would
+        # be a cycle.
+        from services.compact.context_collapse import apply_context_collapse
+        from services.compact.snip_compact import snip_compact_if_needed
+
+        context_window = self.config.model.context_window
+
+        # snip — lossless drop of oldest message groups if way over threshold
+        self._messages = snip_compact_if_needed(
+            self._messages, context_window, self._model_name,
+        )
+
+        # microcompact — always runs, zero cost
         self._messages = micro_compact(self._messages)
 
-        # Step 2: Autocompact (runs if over threshold)
+        # context collapse — BEFORE autocompact, deliberate
+        self._messages = apply_context_collapse(self._messages, context_window)
+
+        # autocompact — runs if still over threshold
         if self._compact_fn:
-            context_window = self.config.model.context_window
             result = await auto_compact_if_needed(
                 messages=self._messages,
                 system_prompt=self._system_prompt,
@@ -161,13 +230,15 @@ class ContextManager:
                         f"{result.post_compact_tokens} tokens"
                     )
 
+        # tool result budget — cap aggregate tool result bytes
+        self.apply_tool_result_budget()
+
         return self._build_api_messages()
 
-    def get_message(self) -> list[dict[str, Any]]:
+    def get_messages(self) -> list[dict[str, Any]]:
         """
-        Get messages WITHOUT compaction (synchronous).
+        Get messages WITHOUT running compaction (synchronous).
         Use get_messages_with_compaction() in the query loop instead.
-        This exists for backwards compatibility.
         """
         return self._build_api_messages()
 
@@ -185,31 +256,27 @@ class ContextManager:
 
     def get_token_stats(self) -> dict[str, Any]:
         """
-        Get token usage statistics with warning states.
-        Claude Code: calculateTokenWarningState() in autoCompact.ts
+        Get token usage statistics with warning states. Warning thresholds come
+        from calculate_token_warning_state() (single source of truth, CC parity).
         """
         context_window = self.config.model.context_window
         current_tokens = estimate_messages_tokens(self._messages, self._model_name)
         threshold = get_auto_compact_threshold(context_window)
-
-        # Warning thresholds (Claude Code constants)
-        warning_threshold = threshold - 20_000
-        error_threshold = threshold - 20_000
+        warn = calculate_token_warning_state(current_tokens, context_window)
 
         percent_used = round((current_tokens / context_window) * 100, 1) if context_window > 0 else 0
-        percent_left = max(0, round(((threshold - current_tokens) / threshold) * 100)) if threshold > 0 else 0
 
         return {
             "current_tokens": current_tokens,
             "context_window": context_window,
             "compact_threshold": threshold,
             "percent_used": percent_used,
-            "percent_left": percent_left,
+            "percent_left": warn.percent_left,
             "messages": len(self._messages),
             "compacted": self._compact_tracking.compacted if self._compact_tracking else False,
-            "above_warning": current_tokens >= warning_threshold,
-            "above_error": current_tokens >= error_threshold,
-            "above_compact": current_tokens >= threshold,
+            "above_warning": warn.is_above_warning,
+            "above_error": warn.is_above_error,
+            "above_compact": warn.is_above_auto_compact,
         }
 
     def apply_tool_result_budget(self) -> None:

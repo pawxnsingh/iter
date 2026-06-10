@@ -137,16 +137,6 @@ class MCPClient:
             logger.warning(f"MCP reconnection failed: {e}")
             return False
 
-    async def health_check(self) -> bool:
-        """Check if the server is still responsive."""
-        if not self._client or self.status != MCPServerStatus.CONNECTED:
-            return False
-        try:
-            await asyncio.wait_for(self._client.list_tools(), timeout=5)
-            return True
-        except Exception:
-            return False
-
     async def call_tool(self, tool_name: str, arguments: dict[str, Any]):
         """Call a tool with automatic reconnection on failure."""
         if not self._client or self.status != MCPServerStatus.CONNECTED:

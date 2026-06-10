@@ -46,12 +46,12 @@ def test_agent_end_factory_with_usage() -> None:
     from agent.event import AgentEvent
     from client.response import TokenUsage
 
-    usage = TokenUsage(prompt_token=10, completion_tokens=5, total_tokens=15)
+    usage = TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
     e = AgentEvent.agent_end(response="ok", usage=usage)
     assert e.data["response"] == "ok"
     # Usage is serialised via __dict__
     assert isinstance(e.data["usage"], dict)
-    assert e.data["usage"].get("prompt_token") == 10
+    assert e.data["usage"].get("prompt_tokens") == 10
     assert e.data["usage"].get("completion_tokens") == 5
     assert e.data["usage"].get("total_tokens") == 15
 

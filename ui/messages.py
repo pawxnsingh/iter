@@ -40,6 +40,20 @@ class InvokeSlashComplete(Message):
 
 
 @dataclass
+class InvokePathSearch(Message):
+    """Prompt wants to show the @-file fuzzy picker overlay."""
+
+    query: str = ""
+
+
+@dataclass
+class InsertPath(Message):
+    """User picked a path from the file picker — insert it into the prompt."""
+
+    path: str
+
+
+@dataclass
 class Dismiss(Message):
     """A popup / overlay wants to be dismissed."""
 

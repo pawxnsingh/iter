@@ -23,6 +23,7 @@ async def compact_conversation(
     system_prompt: str,
     client: LLMClient,
     model: str,
+    custom_instructions: str | None = None,
 ) -> str:
     """
     Call the LLM to summarize the conversation.
@@ -34,8 +35,11 @@ async def compact_conversation(
     1. Format messages into a readable conversation transcript
     2. Send to LLM with the compaction prompt (9-section summary request)
     3. Return the raw summary text (caller handles formatting)
+
+    custom_instructions, when present, are folded into the compaction prompt.
+    They originate from a PreCompact hook (CC: executePreCompactHooks).
     """
-    compact_prompt = get_compact_prompt()
+    compact_prompt = get_compact_prompt(custom_instructions)
 
     # Build the conversation transcript for the model to summarize
     conversation_text = _format_conversation_for_compact(messages)
@@ -107,7 +111,7 @@ def create_compact_fn(client: LLMClient, model: str):
     This is the same dependency injection pattern Claude Code uses
     with QueryDeps.
     """
-    async def compact_fn(messages: list, system_prompt: str) -> str:
-        return await compact_conversation(messages, system_prompt, client, model)
+    async def compact_fn(messages: list, system_prompt: str, custom_instructions: str | None = None) -> str:
+        return await compact_conversation(messages, system_prompt, client, model, custom_instructions)
 
     return compact_fn

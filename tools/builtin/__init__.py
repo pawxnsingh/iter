@@ -1,36 +1,47 @@
+"""
+Built-in tools — each tool lives in its own directory matching Claude Code's
+structure (tools/<ToolName>Tool/<ToolName>Tool.py, plus prompt.py for the
+tools that ship verbatim Claude Code model-facing guidance).
+
+Re-exports here exist for backward compatibility — existing call sites still
+import classes from `tools.builtin`. New code should prefer
+`from tools.builtin.<ToolName>Tool import <ClassName>` directly.
+"""
+
 from tools.base import Tool
-from tools.builtin.agent_tool import AgentTool
-from tools.builtin.ask_user import AskUserTool
-from tools.builtin.config_tool import ConfigTool
-from tools.builtin.edit_file import EditFileTool
-from tools.builtin.glob import GlobTool
-from tools.builtin.grep import GrepTool
-from tools.builtin.list_dir import ListDirTool
-from tools.builtin.memory import MemoryTool
-from tools.builtin.notebook_edit import NotebookEditTool
-from tools.builtin.plan_mode import EnterPlanModeTool, ExitPlanModeTool
-from tools.builtin.read_file import ReadFileTool
-from tools.builtin.send_message import SendMessageTool
-from tools.builtin.shell import ShellTool
-from tools.builtin.sleep_tool import SleepTool
-from tools.builtin.task_tools import (
-    TaskCreateTool,
-    TaskGetTool,
-    TaskListTool,
-    TaskStopTool,
-    TaskUpdateTool,
-)
-from tools.builtin.todo import TodosTool
-from tools.builtin.tool_search import ToolSearchTool
-from tools.builtin.web_fetch import WebFetchTool
-from tools.builtin.web_search import WebSearchTool
-from tools.builtin.write_file import WriteFileTool
+from tools.builtin.AgentResultTool import AgentResultTool
+from tools.builtin.AgentTool import AgentTool
+from tools.builtin.AskUserQuestionTool import AskUserQuestionTool
+from tools.builtin.BashTool import BashTool
+from tools.builtin.ConfigTool import ConfigTool
+from tools.builtin.EnterPlanModeTool import EnterPlanModeTool
+from tools.builtin.EnterWorktreeTool import EnterWorktreeTool
+from tools.builtin.ExitPlanModeTool import ExitPlanModeTool
+from tools.builtin.ExitWorktreeTool import ExitWorktreeTool
+from tools.builtin.FileEditTool import FileEditTool
+from tools.builtin.FileReadTool import FileReadTool
+from tools.builtin.FileWriteTool import FileWriteTool
+from tools.builtin.GlobTool import GlobTool
+from tools.builtin.GrepTool import GrepTool
+from tools.builtin.NotebookEditTool import NotebookEditTool
+from tools.builtin.SendMessageTool import SendMessageTool
+from tools.builtin.SleepTool import SleepTool
+from tools.builtin.TaskCreateTool import TaskCreateTool
+from tools.builtin.TaskGetTool import TaskGetTool
+from tools.builtin.TaskListTool import TaskListTool
+from tools.builtin.TaskStopTool import TaskStopTool
+from tools.builtin.TaskUpdateTool import TaskUpdateTool
+from tools.builtin.TodoWriteTool import TodoWriteTool
+from tools.builtin.ToolSearchTool import ToolSearchTool
+from tools.builtin.WebFetchTool import WebFetchTool
+from tools.builtin.WebSearchTool import WebSearchTool
 
 __all__ = [
-    "ReadFileTool", "WriteFileTool", "EditFileTool", "ShellTool",
-    "ListDirTool", "GrepTool", "GlobTool", "WebSearchTool", "WebFetchTool",
-    "TodosTool", "MemoryTool", "AskUserTool", "AgentTool",
-    "EnterPlanModeTool", "ExitPlanModeTool", "ToolSearchTool", "SleepTool",
+    "FileReadTool", "FileWriteTool", "FileEditTool", "BashTool",
+    "GrepTool", "GlobTool", "WebSearchTool", "WebFetchTool",
+    "TodoWriteTool", "AskUserQuestionTool", "AgentTool", "AgentResultTool",
+    "EnterPlanModeTool", "ExitPlanModeTool", "EnterWorktreeTool", "ExitWorktreeTool",
+    "ToolSearchTool", "SleepTool",
     "ConfigTool", "NotebookEditTool", "SendMessageTool",
     "TaskCreateTool", "TaskGetTool", "TaskListTool", "TaskUpdateTool", "TaskStopTool",
 ]
@@ -38,21 +49,22 @@ __all__ = [
 
 def get_all_builtin_tools() -> list[Tool]:
     return [
-        ReadFileTool,
-        WriteFileTool,
-        EditFileTool,
-        ShellTool,
-        ListDirTool,
+        FileReadTool,
+        FileWriteTool,
+        FileEditTool,
+        BashTool,
         GrepTool,
         GlobTool,
         WebSearchTool,
         WebFetchTool,
-        TodosTool,
-        MemoryTool,
-        AskUserTool,
+        TodoWriteTool,
+        AskUserQuestionTool,
         AgentTool,
+        AgentResultTool,
         EnterPlanModeTool,
         ExitPlanModeTool,
+        EnterWorktreeTool,
+        ExitWorktreeTool,
         ToolSearchTool,
         SleepTool,
         ConfigTool,

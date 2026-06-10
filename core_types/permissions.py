@@ -25,21 +25,27 @@ class PermissionMode(str, Enum):
     BYPASS = "bypass"
     DONT_ASK = "dont_ask"
 
+    @classmethod
+    def _missing_(cls, value: object) -> "PermissionMode | None":
+        """Accept Claude Code's camelCase variants ('acceptEdits', 'dontAsk').
+
+        CC settings.json uses 'acceptEdits' / 'dontAsk'. We canonicalize to
+        snake_case internally for Python idiom, but a CC config file should
+        Just Work without renaming.
+        """
+        if not isinstance(value, str):
+            return None
+        alias = {
+            "acceptEdits": cls.ACCEPT_EDITS,
+            "dontAsk": cls.DONT_ASK,
+        }
+        return alias.get(value)
+
 
 class PermissionBehavior(str, Enum):
     ALLOW = "allow"
     DENY = "deny"
     ASK = "ask"
-
-
-class PermissionRuleSource(str, Enum):
-    """Where a permission rule originated. Priority order (lowest to highest)."""
-    MANAGED = "managed"
-    USER = "user"
-    PROJECT = "project"
-    LOCAL = "local"
-    CLI = "cli"
-    SESSION = "session"
 
 
 @dataclass
@@ -66,8 +72,7 @@ class PermissionResult:
 @dataclass(frozen=True)
 class ToolPermissionContext:
     """
-    Context for permission checking. Mirrors Claude Code's ToolPermissionContext.
-    Immutable (frozen) -- same as Claude Code's DeepImmutable<>.
+    Context for permission checking.
     """
     mode: PermissionMode = PermissionMode.DEFAULT
     working_directories: tuple[str, ...] = ()

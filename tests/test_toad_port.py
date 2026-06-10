@@ -1,16 +1,14 @@
 """
 Smoke tests for the toad-port widgets added in Pass 1:
 
-  - format_path / condense_path
+  - condense_path
   - StrikeText animation lifecycle
   - Welcome logo block
   - Note (+ semantic class styling)
-  - MarkdownNote
   - AgentInfo pill
   - CondensedPath render
   - StatusLine token-stat formatting
   - AgentThought streaming
-  - Cursor / CursorContainer mount
   - HighlightedTextArea — markdown & shell highlighting
   - SideBar.Panel composition
   - Plan strike-on-complete + set_todos bridge
@@ -68,30 +66,8 @@ async def _wait_for_agent(conv, pilot, timeout: float = 3.0) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# format_path / condense_path
+# condense_path  (format_path module was removed — its tests went with it)
 # ═══════════════════════════════════════════════════════════════════════════
-
-
-def test_format_path_home_tilde() -> None:
-    from ui.format_path import format_path
-
-    out = format_path(Path.home() / "proj" / "x.py")
-    assert out.startswith("~/")
-
-
-def test_format_path_absolute_outside_home(tmp_path: Path) -> None:
-    from ui.format_path import format_path
-
-    out = format_path(tmp_path / "x")
-    # Should NOT start with ~/ when path is outside home
-    assert not out.startswith("~/") or str(tmp_path).startswith(str(Path.home()))
-
-
-def test_format_path_directory_appends_slash(tmp_path: Path) -> None:
-    from ui.format_path import format_path
-
-    out = format_path(tmp_path, directory=True)
-    assert out.endswith("/")
 
 
 def test_condense_path_shorter_than_width() -> None:
@@ -155,7 +131,7 @@ async def test_welcome_mounts_logo_and_markdown() -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Note + MarkdownNote
+# Note  (markdown_note was removed as dead code)
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -169,15 +145,6 @@ async def test_note_implements_menu_protocol() -> None:
     # Empty menu is OK
     assert list(n.get_block_menu()) == []
     assert n.get_block_content("clipboard") is not None
-
-
-@pytest.mark.asyncio
-async def test_markdown_note_source_vs_clipboard() -> None:
-    from ui.widgets.markdown_note import MarkdownNote
-
-    n = MarkdownNote("# Heading\n\nBody")
-    assert n.get_block_content("clipboard") == str(n.render())
-    assert n.get_block_content("other") == "# Heading\n\nBody"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -408,11 +375,11 @@ async def test_project_directory_tree_filters_noise(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_welcome_mounted_on_startup() -> None:
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.widgets.conversation import Conversation
     from ui.widgets.welcome import Welcome
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)
@@ -426,12 +393,12 @@ async def test_welcome_mounted_on_startup() -> None:
 @pytest.mark.asyncio
 async def test_welcome_dismissed_on_first_user_input() -> None:
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.messages import UserInputSubmitted
     from ui.widgets.conversation import Conversation
     from ui.widgets.welcome import Welcome
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)
@@ -454,10 +421,10 @@ async def test_welcome_dismissed_on_first_user_input() -> None:
 @pytest.mark.asyncio
 async def test_ctrl_b_focuses_sidebar() -> None:
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.widgets.side_bar import SideBar
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(140, 40)) as pilot:
         await pilot.pause()
         sidebar = app.query_one(SideBar)
@@ -479,13 +446,13 @@ async def test_ctrl_b_focuses_sidebar() -> None:
 @pytest.mark.asyncio
 async def test_prompt_info_bar_has_model_and_path() -> None:
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.widgets.agent_info import AgentInfo
     from ui.widgets.condensed_path import CondensedPath
     from ui.widgets.prompt import Prompt
     from ui.widgets.status_line import StatusLine
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(140, 40)) as pilot:
         await pilot.pause()
         prompt = app.query_one(Prompt)
@@ -505,12 +472,12 @@ async def test_prompt_info_bar_has_model_and_path() -> None:
 @pytest.mark.asyncio
 async def test_block_cursor_up_moves_to_last_block() -> None:
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.messages import TextDelta, UserInputSubmitted
     from ui.widgets.conversation import Conversation
     from ui.widgets.user_input import UserInput
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)

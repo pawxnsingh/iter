@@ -9,14 +9,16 @@ from hooks.config import (
 from hooks.executor import HookExecutor
 
 
-def test_all_27_hook_events():
-    assert len(HookEvent) == 27
+def test_all_hook_events():
+    # 27 from Claude Code + PostSampling = 28
+    assert len(HookEvent) == 28
 
 
 def test_hook_events_include_critical():
     events = {e.value for e in HookEvent}
     assert "PreToolUse" in events
     assert "PostToolUse" in events
+    assert "PostSampling" in events
     assert "SessionStart" in events
     assert "SessionEnd" in events
     assert "UserPromptSubmit" in events

@@ -133,17 +133,142 @@ def _match_wildcard(pattern: str, value: str) -> bool:
         return False
 
 
+@dataclass(frozen=True)
+class PermissionRuleValue:
+    """Parsed CC rule string: `{toolName, ruleContent?}`.
+
+    Claude Code: src/utils/permissions/permissionRuleParser.ts
+        permissionRuleValueFromString('Bash')              → {toolName: 'Bash'}
+        permissionRuleValueFromString('Bash(npm install)') → {toolName: 'Bash', ruleContent: 'npm install'}
+        permissionRuleValueFromString('Read(./src/*)')     → {toolName: 'Read', ruleContent: './src/*'}
+    """
+    tool_name: str
+    rule_content: str | None = None
+
+
+def _find_first_unescaped(s: str, ch: str) -> int:
+    """Index of first `ch` not preceded by `\\`. -1 if none."""
+    i = 0
+    while i < len(s):
+        if s[i] == ch and (i == 0 or s[i - 1] != "\\"):
+            return i
+        i += 1
+    return -1
+
+
+def _find_last_unescaped(s: str, ch: str) -> int:
+    """Index of last `ch` not preceded by `\\`. -1 if none."""
+    i = len(s) - 1
+    while i >= 0:
+        if s[i] == ch and (i == 0 or s[i - 1] != "\\"):
+            return i
+        i -= 1
+    return -1
+
+
+def _unescape_rule_content(content: str) -> str:
+    """Reverse of CC's escapeRuleContent. Order matters: parens first, then \\."""
+    return content.replace("\\(", "(").replace("\\)", ")").replace("\\\\", "\\")
+
+
+def parse_permission_rule_string(rule_string: str) -> PermissionRuleValue:
+    """Parse a CC settings.json rule like `Bash(npm install)`.
+
+    Mirrors CC's permissionRuleValueFromString() exactly:
+      - No '(' present → just tool name
+      - '(' present but ')' missing/misplaced → treat whole string as tool name
+      - Empty content '()' or `(*)` → tool name only (tool-wide rule)
+      - Otherwise → toolName + unescaped ruleContent
+    """
+    open_idx = _find_first_unescaped(rule_string, "(")
+    if open_idx == -1:
+        return PermissionRuleValue(tool_name=rule_string)
+
+    close_idx = _find_last_unescaped(rule_string, ")")
+    if close_idx == -1 or close_idx <= open_idx:
+        return PermissionRuleValue(tool_name=rule_string)
+
+    if close_idx != len(rule_string) - 1:
+        return PermissionRuleValue(tool_name=rule_string)
+
+    tool_name = rule_string[:open_idx]
+    raw_content = rule_string[open_idx + 1 : close_idx]
+
+    if not tool_name:
+        return PermissionRuleValue(tool_name=rule_string)
+    if raw_content == "" or raw_content == "*":
+        return PermissionRuleValue(tool_name=tool_name)
+
+    return PermissionRuleValue(
+        tool_name=tool_name,
+        rule_content=_unescape_rule_content(raw_content),
+    )
+
+
+def parse_rule_strings_to_dict(rules: list[str]) -> dict[str, list[str]]:
+    """Convert a CC-style list of rule strings into our internal dict format.
+
+    Used by config loading to bridge settings.json (CC-shape) ↔ runtime
+    `ToolPermissionContext` (our shape).
+
+    Examples:
+      ["Bash(npm install)", "Bash(echo *)", "Read"]
+        → {"Bash": ["npm install", "echo *"], "Read": [""]}
+      ["Write(/tmp/*)"]
+        → {"Write": ["/tmp/*"]}
+      ["Bash"] (tool-wide)
+        → {"Bash": [""]}    # empty pattern = match anything
+
+    Empty/None entries are silently skipped.
+    """
+    out: dict[str, list[str]] = {}
+    for raw in rules:
+        if not raw or not isinstance(raw, str):
+            continue
+        parsed = parse_permission_rule_string(raw)
+        bucket = out.setdefault(parsed.tool_name, [])
+        # ruleContent=None means tool-wide rule → empty pattern in our format
+        bucket.append(parsed.rule_content or "")
+    return out
+
+
 def match_rules_for_tool(
     tool_name: str,
     rules: dict[str, list[str]],
+    permission_value: str | None = None,
 ) -> list[str]:
     """
-    Find all rules that match a tool name.
-    Returns list of matched rule strings.
+    Find all rules that match a tool invocation.
+
+    Claude Code parity: rules dict is keyed by tool name; each value is a
+    list of sub-patterns (rule "content") that match against the tool's
+    permission value (BashTool → command, file tools → file_path, etc.).
+
+    Matching:
+      - The rules dict key must equal the tool's name.
+      - An empty pattern ("" / None) means "any call to this tool".
+      - A non-empty pattern is wildcard-matched against `permission_value`.
+        If `permission_value` is None (tool has no sub-pattern support),
+        only empty patterns match.
+
+    Examples (rules → tool, value → matches):
+      {"Bash": [""]}          → Bash, anything    → [""]
+      {"Bash": ["echo *"]}    → Bash, "echo hi"   → ["echo *"]
+      {"Bash": ["echo *"]}    → Bash, "ls"        → []
+      {"Read": ["./src/*"]}   → Read, "./src/x"   → ["./src/*"]
     """
-    matched = []
-    for source, patterns in rules.items():
-        for pattern in patterns:
-            if match_rule(pattern, tool_name):
-                matched.append(pattern)
+    matched: list[str] = []
+    patterns = rules.get(tool_name)
+    if not patterns:
+        return matched
+    for pattern in patterns:
+        # Empty pattern → "any call to this tool"
+        if pattern == "" or pattern is None:
+            matched.append(pattern or "")
+            continue
+        # Sub-pattern requires the tool to expose a permission value
+        if permission_value is None:
+            continue
+        if match_rule(pattern, permission_value):
+            matched.append(pattern)
     return matched

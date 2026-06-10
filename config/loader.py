@@ -63,14 +63,13 @@ def _get_project_config(cwd: Path) -> Path | None:
     return None
 
 
-def _get_agent_md_files(cwd: Path) -> Path | None:
+def _get_agent_md_files(cwd: Path) -> str | None:
     current = cwd.resolve()
 
     if current.is_dir():
         agent_md_path = current / AGENT_MD_FILE_NAME
         if agent_md_path.is_file():
-            content = agent_md_path.read_text("utf-8")
-            return content
+            return agent_md_path.read_text("utf-8")
 
     return None
 

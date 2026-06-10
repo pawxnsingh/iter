@@ -4,7 +4,7 @@ End-to-end smoke test for the Textual UI.
 Goals:
   1. All ui/* modules import without error.
   2. DEFAULT_CSS on every widget parses (Textual does this at class creation).
-  3. PieAgentApp mounts MainScreen with Conversation + Prompt + Footer.
+  3. NewtApp mounts MainScreen with Conversation + Prompt + Footer.
   4. The slash-complete overlay opens on "/" and closes on Escape.
 
 Does NOT exercise the real Agent (no API calls) — Conversation's agent
@@ -31,7 +31,7 @@ def test_imports() -> None:
     import ui.app  # noqa: F401
     import ui.messages  # noqa: F401
     import ui.screens.main  # noqa: F401
-    import ui.screens.permission_modal  # noqa: F401
+    import ui.screens.permissions  # noqa: F401
     import ui.widgets.agent_response  # noqa: F401
     import ui.widgets.conversation  # noqa: F401
     import ui.widgets.flash  # noqa: F401
@@ -48,14 +48,14 @@ async def test_app_mounts() -> None:
     """App must mount without errors and expose core widgets."""
     os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test")  # bypass Config.validate
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.widgets.conversation import Conversation
     from ui.widgets.flash import Flash
     from ui.widgets.prompt import Prompt, PromptTextArea
     from ui.widgets.throbber import Throbber
 
     config = Config(cwd=ROOT)
-    app = PieAgentApp(config)
+    app = NewtApp(config)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         assert app.query_one(Conversation)
@@ -70,12 +70,12 @@ async def test_slash_overlay_opens_on_slash() -> None:
     """Typing '/' at an empty prompt should reveal the slash overlay."""
     os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test")
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.widgets.prompt import Prompt, PromptTextArea
     from ui.widgets.slash_complete import SlashComplete
 
     config = Config(cwd=ROOT)
-    app = PieAgentApp(config)
+    app = NewtApp(config)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         prompt = app.query_one(Prompt)
@@ -106,11 +106,11 @@ async def test_slash_command_executes_help() -> None:
     """Submitting '/help' should render a Note with the help text."""
     os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test")
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.widgets.conversation import Conversation, Note
 
     config = Config(cwd=ROOT)
-    app = PieAgentApp(config)
+    app = NewtApp(config)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)

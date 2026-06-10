@@ -12,21 +12,17 @@ from textual.widgets import Label, Markdown
 
 
 ASCII_LOGO = r"""
-    ╭─────────────────────╮
-    │   ◆◆◆  PieAgent     │
-    │ ◆    ◆              │
-    │◆      ◆  coding CLI │
-    │ ◆    ◆              │
-    │   ◆◆◆               │
-    ╰─────────────────────╯
+   ◉ ‿ ◉    newt
+              coding CLI
 """
 
 
 WELCOME_MD = """\
 ## Welcome
 
-Type a message below to start coding.
-Use `/help` for available commands · `@` to reference a file · `F1` for shortcuts.
+A small Claude Code-style coding CLI, inspired by [toad](https://github.com/batrachianai/toad).
+
+Type a message below to start. Use `/help` for commands · `@` to reference a file · `F1` for shortcuts.
 """
 
 

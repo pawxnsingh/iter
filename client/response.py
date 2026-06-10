@@ -29,14 +29,14 @@ class TextDelta:
 
 @dataclass
 class TokenUsage:
-    prompt_token: int = 0  # the system prompt also comes under this
+    prompt_tokens: int = 0  # the system prompt also comes under this
     completion_tokens: int = 0
     total_tokens: int = 0
     cached_tokens: int = 0
 
     def __add__(self, other: TokenUsage):
         return TokenUsage(
-            prompt_token=self.prompt_token + other.prompt_token,
+            prompt_tokens=self.prompt_tokens + other.prompt_tokens,
             completion_tokens=self.completion_tokens + other.completion_tokens,
             total_tokens=self.total_tokens + other.total_tokens,
             cached_tokens=self.cached_tokens + other.cached_tokens,
@@ -55,20 +55,6 @@ class ToolCall:
     call_id: str
     name: str | None = None
     arguments: str = ""
-
-
-@dataclass
-class ToolResultMessage:
-    tool_call_id: str
-    content: str
-    is_error: bool = False
-
-    def to_open_schema(self) -> dict[str, Any]:
-        return {
-            "role": "tool",
-            "tool_call_id": self.tool_call_id,
-            "content": self.content,
-        }
 
 
 @dataclass

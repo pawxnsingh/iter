@@ -26,6 +26,8 @@ from textual.widgets import Label
 
 from ui.messages import (
     Dismiss,
+    InsertPath,
+    InvokePathSearch,
     InvokeSlashComplete,
     SlashCommandChosen,
     UserInputSubmitted,
@@ -33,6 +35,7 @@ from ui.messages import (
 from ui.widgets.agent_info import AgentInfo
 from ui.widgets.condensed_path import CondensedPath
 from ui.widgets.highlighted_textarea import HighlightedTextArea
+from ui.widgets.path_search import PathSearch
 from ui.widgets.slash_complete import SlashComplete
 from ui.widgets.status_line import StatusLine
 
@@ -57,11 +60,15 @@ class PromptTextArea(HighlightedTextArea):
         self.insert("\n")
 
     def on_key(self, event: events.Key) -> None:
-        # '/' on an empty prompt opens the overlay instead of typing literal
+        # '/' on an empty prompt opens the slash overlay
         if event.character == "/" and self.text == "":
             event.stop()
             event.prevent_default()
             self.post_message(InvokeSlashComplete(query=""))
+        # '@' anywhere opens the fuzzy file picker; the literal '@' still
+        # gets typed so the user can type more or escape to keep just '@'.
+        elif event.character == "@":
+            self.post_message(InvokePathSearch(query=""))
 
 
 class Prompt(VerticalGroup):
@@ -125,6 +132,7 @@ class Prompt(VerticalGroup):
 
     def compose(self) -> ComposeResult:
         yield SlashComplete(self._commands)
+        yield PathSearch(self.cwd)
         with HorizontalGroup(id="prompt-container"):
             yield Label("❯", id="chevron")
             yield PromptTextArea()
@@ -158,8 +166,28 @@ class Prompt(VerticalGroup):
     @on(InvokeSlashComplete)
     def _on_invoke_slash(self, event: InvokeSlashComplete) -> None:
         event.stop()
-        slash = self.query_one(SlashComplete)
-        slash.open(event.query)
+        self.query_one(SlashComplete).open(event.query)
+
+    @on(InvokePathSearch)
+    def _on_invoke_path(self, event: InvokePathSearch) -> None:
+        event.stop()
+        self.query_one(PathSearch).open()
+
+    @on(InsertPath)
+    def _on_insert_path(self, event: InsertPath) -> None:
+        """User picked a path — paste it into the prompt at the cursor."""
+        event.stop()
+        try:
+            ta = self.query_one(PromptTextArea)
+        except Exception:
+            return
+        # Replace any trailing "@" that triggered the picker with the path
+        text = ta.text
+        if text.endswith("@"):
+            ta.text = text[:-1] + event.path
+        else:
+            ta.insert(event.path)
+        ta.focus()
 
     @on(Dismiss)
     def _on_dismiss(self, event: Dismiss) -> None:

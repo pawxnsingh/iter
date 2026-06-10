@@ -1,31 +1,30 @@
 """
-Query Loop: The heart of the agent — async generator state machine.
+Query Loop: async generator state machine that processes one user message.
 
-Source: Claude Code src/query.ts (~1700 lines)
+Mirrors Claude Code's src/query.ts. Each iteration is one LLM round-trip
+plus tool execution. The model votes to continue by emitting tool calls
+and votes to stop by responding with just text.
 
-Architecture:
-  while True:
-    1. COMPACT (microcompact + autocompact)
-    2. STREAM MODEL (API call, yield events)
-    3. PERMISSION CHECK (per-tool, before execution)
-    4. PRE-TOOL HOOKS (can block/modify)
-    5. EXECUTE TOOLS (parallel for reads, serial for writes)
-    6. POST-TOOL HOOKS (can stop continuation)
-    7. RECOVER (if errors)
-    8. CONTINUE or STOP
-
-Tracks WHY it continued via transition.reason.
-Circuit breakers prevent infinite retries.
+Per iteration:
+    task budget check → compact pipeline → stream model →
+    persist + POST_SAMPLING → continue decision (with recovery) →
+    tool permission gate → pre-tool hooks → run tools → post-tool hooks →
+    increment turn
 """
 
 from __future__ import annotations
 
+import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import AsyncGenerator
 
 from agent.event import AgentEvent
-from client.response import StreamEventType, ToolCall
+from agent.session import Session
+from client.llm_client import ErrorKind, classify_error
+from client.response import StreamEventType, ToolCall, TokenUsage
+from config.config import Config
+from core_types.hooks import HookEvent
 from core_types.permissions import (
     PermissionBehavior,
     PermissionMode,
@@ -33,12 +32,10 @@ from core_types.permissions import (
 )
 from hooks.executor import HookExecutor
 from permissions.checker import PermissionChecker
-from query.transitions import Continue
-from services.compact.auto_compact import (
-    AutoCompactTracking,
-    calculate_token_warning_state,
-)
+from services.compact.reactive_compact import try_reactive_compact
 from services.tools.orchestration import ToolCallRequest, run_tools
+from tools.base import ToolResult
+from utils.text import estimate_token
 
 logger = logging.getLogger(__name__)
 
@@ -47,31 +44,41 @@ MAX_OUTPUT_TOKENS_RECOVERY_LIMIT = 3
 
 @dataclass
 class QueryState:
-    """Mutable state carried between loop iterations. Claude Code: State in query.ts:204."""
+    """Mutable state carried between loop iterations."""
     turn_count: int = 1
     max_output_tokens_recovery_count: int = 0
     has_attempted_reactive_compact: bool = False
-    compact_tracking: AutoCompactTracking | None = None
-    transition: Continue | None = None
-    recent_tool_hashes: list[str] = field(default_factory=list)
-
-
-def _hash_tool_call(name: str, args: dict) -> str:
-    import hashlib
-    import json
-    key = f"{name}:{json.dumps(args, sort_keys=True, default=str)}"
-    return hashlib.md5(key.encode()).hexdigest()[:12]
+    # Cumulative tokens spent across iterations of this user message.
+    # Compared against config.task_budget_tokens; abort if over.
+    task_tokens_used: int = 0
+    # Stashed stream/API error. The continue-decision branch decides
+    # whether recovery consumes it or the user needs to see it.
+    pending_error: str | None = None
+    # True once a Stop hook has already forced a continuation this turn. CC sets
+    # stop_hook_active so a Stop hook can't trap the agent in an infinite loop.
+    stop_hook_active: bool = False
 
 
 async def query_loop(
-    session,
-    config,
+    session: Session,
+    config: Config,
     permission_prompt_fn=None,
     abort_controller=None,
+    hook_executor: HookExecutor | None = None,
 ) -> AsyncGenerator[AgentEvent, None]:
     """
     The main query loop — async generator state machine.
-    Mirrors Claude Code's queryLoop() exactly.
+
+    `hook_executor` should be the snapshotted instance the Agent built at
+    session start (so PRE_TOOL_USE / POST_TOOL_USE actually fire). If the
+    caller passes None, we fall back to an empty no-op executor so the loop
+    is testable in isolation.
+          
+    query_loop is an async generator state machine that turns 
+    one user message into a stream of AgentEvents by running
+    multiple round-trips with the LLM until the model stops asking for tools. 
+    Each iteration of the outer while True is one LLM round-trip plus its tool execution.
+    
     """
     state = QueryState()
     max_turns = config.max_turns
@@ -80,69 +87,53 @@ async def query_loop(
     permission_context = ToolPermissionContext(
         mode=PermissionMode(config.permission_mode) if hasattr(config, 'permission_mode') and config.permission_mode else PermissionMode.DEFAULT,
         working_directories=(str(config.cwd),),
+        allow_rules=getattr(config, "allow_rules", {}) or {},
+        deny_rules=getattr(config, "deny_rules", {}) or {},
+        ask_rules=getattr(config, "ask_rules", {}) or {},
     )
     permission_checker = PermissionChecker(permission_context)
 
-    # Build hook executor (from config if available)
-    hook_executor = HookExecutor()
+    # Use the hook executor passed from Agent (carries the snapshotted hooks
+    # config); fall back to empty if invoked standalone.
+    if hook_executor is None:
+        hook_executor = HookExecutor()
 
+    # Task budget — None means unlimited
+    task_budget = getattr(config, "task_budget_tokens", None)
+    
     while True:
-        # ══════════════════════════════════════════════════════════
-        # STEP 1: COMPACT PHASE (4 layers)
-        # Claude Code order: snip → microcompact → context collapse → autocompact
-        # ══════════════════════════════════════════════════════════
+        # ── TASK BUDGET CHECK ──
+        # Claude Code: per-message budget tracker. Abort if cumulative
+        # token spend exceeds the configured budget.
+        if task_budget is not None and state.task_tokens_used >= task_budget:
+            yield AgentEvent.agent_error(
+                f"Task budget exhausted: spent {state.task_tokens_used:,} of "
+                f"{task_budget:,} tokens. Abandoning further iterations."
+            )
+            return
 
-        # Layer 0: Snip compact — remove oldest message groups if way over
-        from services.compact.snip_compact import snip_compact_if_needed
-        context_window = config.model.context_window
-        session.context_manager._messages, snip_freed = snip_compact_if_needed(
-            session.context_manager._messages, context_window,
-        )
-
-        # Layer 1-3: microcompact + context collapse + autocompact (inside get_messages_with_compaction)
+        # ══════════════════════════════════════════════════════════
+        # STEP 1: COMPACT PHASE
+        # Full pipeline runs inside get_messages_with_compaction in the
+        # order Claude Code uses (query.ts ~396-468):
+        #   snip → microcompact → context_collapse → autocompact → tool_result_budget
+        #
+        # No synthetic-413 preempt here. Claude Code skips that block when
+        # reactive compact is enabled (query.ts ~628-647): the synthetic
+        # error returns before the API call, so reactive compact never sees
+        # a real prompt-too-long to react to. We always have reactive
+        # compact, so we let the real 413 flow into STEP 4 recovery.
+        # ══════════════════════════════════════════════════════════
         messages = await session.context_manager.get_messages_with_compaction()
-
-        # Layer 1.5: Context collapse (between microcompact and autocompact)
-        from services.compact.context_collapse import apply_context_collapse
-        session.context_manager._messages = apply_context_collapse(
-            session.context_manager._messages, context_window,
-        )
-
-        # Apply tool result budget (Claude Code: MAX_TOOL_RESULTS_PER_MESSAGE_CHARS = 200K)
-        session.context_manager.apply_tool_result_budget()
-
-        # Re-fetch messages after all compaction layers
-        messages = session.context_manager.get_message()
-
-        # ── BLOCKING LIMIT CHECK ──
-        # Claude Code: synthetic 413 before API call if at blocking limit
-        # Prevents wasted API calls when context is irrecoverably over limit
-        context_window = config.model.context_window
-        token_count = sum(
-            len(m.get("content", "")) // 4 for m in messages  # rough estimate
-        )
-        warning_state = calculate_token_warning_state(token_count, context_window)
-
-        if warning_state.is_at_blocking_limit:
-            if not state.has_attempted_reactive_compact:
-                logger.warning(f"At blocking limit ({token_count} tokens) — forcing compact")
-                state.has_attempted_reactive_compact = True
-                state.transition = Continue(reason="reactive_compact_retry")
-                continue
-            else:
-                yield AgentEvent.agent_error(
-                    "Context too large even after compaction. Use /clear to start fresh."
-                )
-                return
 
         # ══════════════════════════════════════════════════════════
         # STEP 2: MODEL STREAMING PHASE
-        # Claude Code: StreamingToolExecutor starts tools DURING streaming
         # ══════════════════════════════════════════════════════════
         response_text = ""
         tool_calls: list[ToolCall] = []
         tool_schemas = session.tool_registry.get_schemas()
         api_error: str | None = None
+        turn_usage: TokenUsage | None = None
 
         session.context_manager.set_turn(state.turn_count)
 
@@ -168,44 +159,61 @@ async def query_loop(
 
                 elif event.type == StreamEventType.ERROR:
                     error_msg = event.error or "Unknown API error"
-                    # Handle retry reset — discard partial content from failed attempt
+                    # `__RETRY_RESET__` is our internal contract between
+                    # LLMClient and the loop: when the client retries
+                    # mid-stream (e.g. transient 5xx), it emits this marker
+                    # so we discard the partial response we collected and
+                    # keep listening from the start of the new attempt.
                     if error_msg.startswith("__RETRY_RESET__"):
                         response_text = ""
                         tool_calls = []
                         continue
+                    # Error withholding: stash, do not yield yet. The
+                    # continue-decision below decides whether recovery
+                    # consumes this error or the user needs to see it.
                     api_error = error_msg
-                    yield AgentEvent.agent_error(api_error)
+
+                # Capture token usage if the provider streamed it
+                if event.usage is not None:
+                    turn_usage = event.usage
 
         except Exception as e:
-            error_str = str(e).lower()
+            # Stash, don't yield — recovery decides.
             api_error = str(e)
-
-            # Fallback model on 529/overloaded errors (Claude Code: FallbackTriggeredError)
-            if ("529" in error_str or "overloaded" in error_str) and hasattr(config, '_fallback_attempted') and not config._fallback_attempted:
-                logger.warning("Model overloaded — would switch to fallback model")
-                # In a full implementation, this would switch to a fallback model
-                # and retry the request. For now, log and continue.
-
             logger.exception("Model streaming error")
-            yield AgentEvent.agent_error(f"Model error: {e}")
+
+        # Update task budget with this turn's usage (provider-agnostic).
+        # Falls back to a rough estimate if the provider didn't report usage.
+        if turn_usage is not None:
+            state.task_tokens_used += turn_usage.total_tokens or (
+                (turn_usage.prompt_tokens or 0) + (turn_usage.completion_tokens or 0)
+            )
+        elif response_text:
+            state.task_tokens_used += estimate_token(response_text)
+
+        # Stash the error for the recovery branch below.
+        state.pending_error = api_error
 
         # ══════════════════════════════════════════════════════════
         # STEP 3: ADD ASSISTANT MESSAGE TO CONTEXT + PERSIST
         # ══════════════════════════════════════════════════════════
-        import json as _json
         tool_calls_data = [
             {
                 "id": tc.call_id,
                 "type": "function",
-                "function": {"name": tc.name, "arguments": _json.dumps(tc.arguments, default=str)},
+                "function": {"name": tc.name, "arguments": json.dumps(tc.arguments, default=str)},
             }
             for tc in tool_calls
         ] if tool_calls else None
 
+
+        # context_manager = in-memory message list. 
+        # Next iteration's compaction phase uses this.
         session.context_manager.add_assistant_message(
             content=response_text,
             tool_calls=tool_calls_data,
         )
+        # save_message = appends to JSONL on disk.
         session.save_message(
             role="assistant", content=response_text,
             tool_calls=tool_calls_data, turn=state.turn_count,
@@ -214,21 +222,53 @@ async def query_loop(
         if response_text:
             yield AgentEvent.text_complete(content=response_text)
 
+        # ── POST-SAMPLING HOOK ──
+        # Fires after streaming completes but BEFORE tools execute. Lets
+        # observers see the full assistant message + intended tool calls.
+        # Hook can return additional_context to inject into next turn.
+        
+        # DIDN'T GOT THAT, WILL HAVE UNDERSTAND THAT AGAIN
+        post_sampling = await hook_executor.run_event_hooks(
+            event=HookEvent.POST_SAMPLING,
+            data={
+                "session_id": session.session_id,
+                "assistant_text": response_text,
+                "tool_calls": [
+                    {"id": tc.call_id, "name": tc.name, "arguments": tc.arguments}
+                    for tc in tool_calls
+                ],
+                "turn": state.turn_count,
+            },
+        )
+
+        if post_sampling.additional_context:
+            session.context_manager.add_user_message(
+                f"[post-sampling hook context]\n{post_sampling.additional_context}"
+            )
+
         # ══════════════════════════════════════════════════════════
         # STEP 4: CONTINUE DECISION
         # Claude Code line 1062: if (!needsFollowUp)
         # ══════════════════════════════════════════════════════════
         needs_follow_up = len(tool_calls) > 0
+        
+                
+        # The fundamental rule:
+        # - Model emitted tool calls → continue (fall through to STEP 5, then loop again)
+        # - Model emitted only text → stop (with recovery branches first)
+
 
         if not needs_follow_up:
+            error_kind = classify_error(state.pending_error) if state.pending_error else ErrorKind.OTHER
+
             # ── RECOVERY: Prompt too long (413) ──
-            if api_error and "prompt" in api_error.lower() and "long" in api_error.lower():
+            if error_kind == ErrorKind.PROMPT_TOO_LONG:
                 if not state.has_attempted_reactive_compact:
                     logger.info("Prompt too long — attempting reactive compact")
                     state.has_attempted_reactive_compact = True
 
-                    # Run reactive compact (Claude Code Layer 4)
-                    from services.compact.reactive_compact import try_reactive_compact
+                    # Reactive compact: emergency LLM-driven summarisation
+                    # triggered when the API returns prompt-too-long mid-call.
                     if session.context_manager._compact_fn:
                         compacted = await try_reactive_compact(
                             messages=session.context_manager._messages,
@@ -239,7 +279,8 @@ async def query_loop(
                             session.context_manager._messages = compacted
                             logger.info("Reactive compact succeeded — retrying")
 
-                    state.transition = Continue(reason="reactive_compact_retry")
+                    # Recovery is in flight — withhold the error from user.
+                    state.pending_error = None
                     continue
                 else:
                     yield AgentEvent.agent_error("Context too large even after reactive compaction")
@@ -247,7 +288,7 @@ async def query_loop(
 
             # ── RECOVERY: Max output tokens ──
             # Claude Code: isWithheldMaxOutputTokens check + recovery loop
-            if api_error and "max" in api_error.lower() and "token" in api_error.lower():
+            if error_kind == ErrorKind.MAX_OUTPUT_TOKENS:
                 if state.max_output_tokens_recovery_count < MAX_OUTPUT_TOKENS_RECOVERY_LIMIT:
                     state.max_output_tokens_recovery_count += 1
                     logger.info(
@@ -260,7 +301,7 @@ async def query_loop(
                         "you were doing. Pick up mid-thought if that is where the cut happened. "
                         "Break remaining work into smaller pieces."
                     )
-                    state.transition = Continue(reason="max_output_tokens_retry")
+                    state.pending_error = None
                     continue
                 else:
                     yield AgentEvent.agent_error(
@@ -268,6 +309,36 @@ async def query_loop(
                     )
                     return
 
+            # No recovery applicable — surface the error to the user (if any).
+            if state.pending_error:
+                yield AgentEvent.agent_error(state.pending_error)
+                state.pending_error = None
+                return
+
+            # ── STOP HOOK ──
+            # Clean stop: the model finished with text only. Fire Stop hooks
+            # (CC: executeStopHooks). A blocking Stop hook means "don't stop yet"
+            # — its message is fed back to the model and the loop continues.
+            # stop_hook_active guards against an infinite block loop.
+            if not state.stop_hook_active:
+                stop_hook = await hook_executor.run_stop_hooks(
+                    last_assistant_message=response_text,
+                    session_id=session.session_id,
+                    cwd=str(config.cwd),
+                    transcript_path=getattr(session, "transcript_path", "") or "",
+                    permission_mode=str(getattr(config, "permission_mode", "") or ""),
+                    stop_hook_active=state.stop_hook_active,
+                )
+                if stop_hook.blocking_error:
+                    state.stop_hook_active = True
+                    session.context_manager.add_user_message(
+                        f"[stop hook] {stop_hook.blocking_error}"
+                    )
+                    state.turn_count += 1
+                    if state.turn_count > max_turns:
+                        yield AgentEvent.agent_error(f"Max turns ({max_turns}) reached")
+                        return
+                    continue
             return
 
         # ══════════════════════════════════════════════════════════
@@ -275,6 +346,10 @@ async def query_loop(
         # Claude Code: runToolUse() lifecycle:
         #   validate → permission → pre-hooks → execute → post-hooks
         # ══════════════════════════════════════════════════════════
+        
+        # Convert ToolCall (the streaming representation) to ToolCallRequest 
+        # (what run_tools accepts). Build a name→Tool lookup.
+        
         tool_requests = [
             ToolCallRequest(
                 call_id=tc.call_id,
@@ -284,30 +359,11 @@ async def query_loop(
             for tc in tool_calls
         ]
 
-        # ── LOOP DETECTION ──
-        for req in tool_requests:
-            h = _hash_tool_call(req.name, req.arguments)
-            state.recent_tool_hashes.append(h)
-
-        if len(state.recent_tool_hashes) >= 10:
-            recent = state.recent_tool_hashes[-10:]
-            for h in set(recent):
-                if recent.count(h) >= 3:
-                    logger.warning("Loop detected: tool call repeated 3+ times")
-                    yield AgentEvent.agent_error(
-                        "Possible infinite loop detected — same tool called repeatedly with same arguments."
-                    )
-                    return
-
-        if len(state.recent_tool_hashes) > 20:
-            state.recent_tool_hashes = state.recent_tool_hashes[-20:]
-
         # Build tools dict
         tools_dict = {tool.name: tool for tool in session.tool_registry.get_tools()}
 
         # ── PERMISSION CHECK BEFORE EXECUTION (CRITICAL) ──
         # Must check permissions BEFORE running tools, not after
-        from tools.base import ToolResult
         approved_requests = []
 
         for req in tool_requests:
@@ -322,7 +378,20 @@ async def query_loop(
 
             perm_result = await permission_checker.check(tool, req.arguments)
 
+            _perm_common = dict(
+                session_id=session.session_id,
+                cwd=str(config.cwd),
+                permission_mode=str(getattr(config, "permission_mode", "") or ""),
+            )
+
             if perm_result.behavior == PermissionBehavior.DENY:
+                # PermissionDenied hook (CC: executePermissionDeniedHooks).
+                await hook_executor.run_event_hooks(
+                    event=HookEvent.PERMISSION_DENIED.value,
+                    data={"tool_name": req.name, "tool_input": req.arguments,
+                          "tool_use_id": req.call_id, "reason": perm_result.message,
+                          **_perm_common},
+                )
                 denied = ToolResult.error_result(f"Permission denied: {perm_result.message}")
                 yield AgentEvent.tool_call_start(call_id=req.call_id, name=req.name, arguments=req.arguments)
                 yield AgentEvent.tool_call_complete(call_id=req.call_id, name=req.name, result=denied)
@@ -330,12 +399,31 @@ async def query_loop(
                 continue
 
             if perm_result.behavior == PermissionBehavior.ASK:
+                # PermissionRequest hook (CC: executePermissionRequestHooks) +
+                # Notification hook (CC fires a Notification when prompting).
+                await hook_executor.run_event_hooks(
+                    event=HookEvent.PERMISSION_REQUEST.value,
+                    data={"tool_name": req.name, "tool_input": req.arguments,
+                          "permission_suggestions": None, **_perm_common},
+                )
+                await hook_executor.run_event_hooks(
+                    event=HookEvent.NOTIFICATION.value,
+                    data={"message": perm_result.message, "title": "Permission required",
+                          "notification_type": "permission_request", **_perm_common},
+                )
                 if permission_prompt_fn:
                     approved = await permission_prompt_fn(
                         req.name, perm_result.message,
                         tool.is_destructive(req.arguments) if tool else False,
                     )
                     if not approved:
+                        # User declined → PermissionDenied (reason: user).
+                        await hook_executor.run_event_hooks(
+                            event=HookEvent.PERMISSION_DENIED.value,
+                            data={"tool_name": req.name, "tool_input": req.arguments,
+                                  "tool_use_id": req.call_id, "reason": "denied by user",
+                                  **_perm_common},
+                        )
                         denied = ToolResult.error_result("Permission denied by user")
                         yield AgentEvent.tool_call_start(call_id=req.call_id, name=req.name, arguments=req.arguments)
                         yield AgentEvent.tool_call_complete(call_id=req.call_id, name=req.name, result=denied)
@@ -354,6 +442,13 @@ async def query_loop(
         # ── EXECUTE ONLY APPROVED TOOLS ──
         should_stop = False
 
+        # Abort check before running tools (CC: signal.aborted before runToolUse).
+        # Without this, a Ctrl+C after the stream finishes but before/between
+        # tool execution wouldn't be honored until the next round-trip.
+        if abort_controller and abort_controller.aborted:
+            yield AgentEvent.agent_error("Interrupted by user")
+            return
+
         # ── PRE-TOOL HOOKS (BEFORE execution, not after) ──
         hook_approved = []
         for req in approved_requests:
@@ -362,6 +457,9 @@ async def query_loop(
                 tool_input=req.arguments,
                 session_id=session.session_id,
                 cwd=str(config.cwd),
+                tool_use_id=req.call_id,
+                transcript_path=getattr(session, "transcript_path", "") or "",
+                permission_mode=str(getattr(config, "permission_mode", "") or ""),
             )
             if hook_result.blocking_error:
                 blocked_result = ToolResult.error_result(f"Blocked by hook: {hook_result.blocking_error}")
@@ -397,22 +495,66 @@ async def query_loop(
                 turn=state.turn_count,
             )
 
+            # Image attachments (CC parity: FileRead image blocks). Tool messages
+            # can't carry images in the OpenAI shape, so surface them as a
+            # follow-up user message the model can actually see.
+            imgs = getattr(result.result, "images", None)
+            if imgs:
+                session.context_manager.add_image_message(
+                    imgs, content=f"[image from {result.name}]"
+                )
+
             # ── PLAN MODE: Handle permission mode changes from tools ──
-            # EnterPlanMode/ExitPlanMode set permission_mode via metadata
+            # EnterPlanMode/ExitPlanMode set permission_mode via metadata.
+            # ToolPermissionContext is frozen, so rebuild the checker — just
+            # mutating config.permission_mode would leave the live checker on
+            # the old mode and the transition would not actually gate tools.
             if result.result.metadata.get("set_permission_mode"):
                 new_mode = result.result.metadata["set_permission_mode"]
                 config.permission_mode = new_mode
+                permission_context = ToolPermissionContext(
+                    mode=PermissionMode(new_mode),
+                    working_directories=permission_context.working_directories,
+                    allow_rules=permission_context.allow_rules,
+                    deny_rules=permission_context.deny_rules,
+                    ask_rules=permission_context.ask_rules,
+                )
+                permission_checker = PermissionChecker(permission_context)
                 logger.info(f"Permission mode changed to: {new_mode}")
 
             # ── POST-TOOL HOOKS ──
-            post_hook = await hook_executor.run_post_tool_hooks(
+            # CC fires PostToolUse on success and PostToolUseFailure on failure
+            # (separate event names, separate hook configs). Route by result.
+            common = dict(
                 tool_name=result.name,
                 tool_input=result.arguments,
-                tool_output=tool_output,
                 session_id=session.session_id,
                 cwd=str(config.cwd),
+                tool_use_id=result.call_id,
+                transcript_path=getattr(session, "transcript_path", "") or "",
+                permission_mode=str(getattr(config, "permission_mode", "") or ""),
             )
-            if post_hook.prevent_continuation:
+            if result.result.success:
+                post_hook = await hook_executor.run_post_tool_hooks(
+                    tool_output=tool_output, **common,
+                )
+            else:
+                post_hook = await hook_executor.run_post_tool_failure_hooks(
+                    error=tool_output, **common,
+                )
+            # Stop hooks blocking-error: a post-tool hook can inject a
+            # blocking_error to force the agent to retry with feedback,
+            # rather than just preventing continuation. The error becomes
+            # a synthetic user message for the next iteration.
+            if post_hook.blocking_error:
+                logger.info(
+                    f"Post-tool hook blocking on {result.name}: {post_hook.blocking_error}"
+                )
+                session.context_manager.add_user_message(
+                    f"[hook feedback] {post_hook.blocking_error}"
+                )
+                # Don't set should_stop — fall through, loop continues.
+            elif post_hook.prevent_continuation:
                 should_stop = True
 
         if should_stop:
@@ -427,10 +569,11 @@ async def query_loop(
         # Reset recovery state on new turn (Claude Code line 1720-1721)
         state.max_output_tokens_recovery_count = 0
         state.has_attempted_reactive_compact = False
+        # The model did real work (tool calls) this iteration, so a future
+        # natural stop should be able to fire Stop hooks again.
+        state.stop_hook_active = False
 
         # Check max turns (Claude Code line 1705)
         if state.turn_count > max_turns:
             yield AgentEvent.agent_error(f"Max turns ({max_turns}) reached")
             return
-
-        state.transition = Continue(reason="tool_execution")

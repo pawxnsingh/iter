@@ -29,6 +29,18 @@ class InstructionFile:
     content: str
 
 
+def _load_instruction_file(path: Path, type_name: str) -> InstructionFile | None:
+    """Read an instruction file; return None on any read error.
+
+    Centralises the 'try-read-text-or-skip' pattern so the loader
+    below stays declarative.
+    """
+    try:
+        return InstructionFile(str(path), type_name, path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
 def load_all_instructions(cwd: str) -> list[InstructionFile]:
     """
     Load instruction files following Claude Code's exact hierarchy.
@@ -39,22 +51,14 @@ def load_all_instructions(cwd: str) -> list[InstructionFile]:
     # 1. Managed (/etc/ai-agent/AGENT.md)
     managed = Path("/etc/ai-agent/AGENT.md")
     if managed.exists():
-        try:
-            instructions.append(InstructionFile(
-                str(managed), "managed", managed.read_text(encoding="utf-8")
-            ))
-        except Exception:
-            pass
+        if (instr := _load_instruction_file(managed, "managed")) is not None:
+            instructions.append(instr)
 
     # 2. User (~/.config/ai-agent/AGENT.md)
     user_path = Path(user_config_dir("ai-agent")) / "AGENT.md"
     if user_path.exists():
-        try:
-            instructions.append(InstructionFile(
-                str(user_path), "user", user_path.read_text(encoding="utf-8")
-            ))
-        except Exception:
-            pass
+        if (instr := _load_instruction_file(user_path, "user")) is not None:
+            instructions.append(instr)
 
     # 3. Project: walk up from CWD to root
     project_files: list[InstructionFile] = []
@@ -65,23 +69,15 @@ def load_all_instructions(cwd: str) -> list[InstructionFile]:
         for name in ["AGENT.md", ".ai-agent/AGENT.md"]:
             f = current / name
             if f.is_file():
-                try:
-                    project_files.append(InstructionFile(
-                        str(f), "project", f.read_text(encoding="utf-8")
-                    ))
-                except Exception:
-                    pass
+                if (instr := _load_instruction_file(f, "project")) is not None:
+                    project_files.append(instr)
 
         # Check .ai-agent/rules/*.md
         rules_dir = current / ".ai-agent" / "rules"
         if rules_dir.is_dir():
             for rule_file in sorted(rules_dir.glob("*.md")):
-                try:
-                    project_files.append(InstructionFile(
-                        str(rule_file), "project", rule_file.read_text(encoding="utf-8")
-                    ))
-                except Exception:
-                    pass
+                if (instr := _load_instruction_file(rule_file, "project")) is not None:
+                    project_files.append(instr)
 
         current = current.parent
 
@@ -91,12 +87,8 @@ def load_all_instructions(cwd: str) -> list[InstructionFile]:
     # 4. Local (AGENT.local.md — private, project-specific)
     local = Path(cwd) / "AGENT.local.md"
     if local.is_file():
-        try:
-            instructions.append(InstructionFile(
-                str(local), "local", local.read_text(encoding="utf-8")
-            ))
-        except Exception:
-            pass
+        if (instr := _load_instruction_file(local, "local")) is not None:
+            instructions.append(instr)
 
     return instructions
 

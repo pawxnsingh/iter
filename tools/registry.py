@@ -3,9 +3,8 @@ from pathlib import Path
 from typing import Any
 
 from config.config import Config
-from tools.base import Tool, ToolInvocation, ToolResult
+from tools.base import Tool, ToolInvocation, ToolResult, truncate_tool_result
 from tools.builtin import get_all_builtin_tools
-from tools.subagents import SubagentTool, get_default_subagent_definitions
 
 logger = logging.getLogger(__name__)
 
@@ -95,18 +94,10 @@ class ToolRegistry:
                 metadata={"tool_name": name},
             )
 
-        # Enforce max result size (Claude Code pattern: maxResultSizeChars per tool)
-        if len(result.output) > tool.max_result_size_chars:
-            result = ToolResult(
-                success=result.success,
-                output=result.output[:tool.max_result_size_chars] + "\n... [output truncated]",
-                error=result.error,
-                truncated=True,
-                metadata=result.metadata,
-                exit_code=result.exit_code,
-            )
-
-        return result
+        # Enforce max result size — registry path has no call_id, so this
+        # falls back to plain truncation. Orchestration uses the same helper
+        # with a call_id to persist overflow to disk instead.
+        return truncate_tool_result(result, tool)
 
     def get_schemas(self) -> list[dict[str, Any]]:
         return [tool.to_openai_schema() for tool in self.get_tools()]
@@ -117,13 +108,5 @@ def create_default_registry(config: Config) -> ToolRegistry:
 
     for tool_class in get_all_builtin_tools():
         tool_registry.register(tool_class(config=config))
-
-    for subagent_def in get_default_subagent_definitions():
-        tool_registry.register(
-            SubagentTool(
-                config=config,
-                definition=subagent_def,
-            )
-        )
 
     return tool_registry

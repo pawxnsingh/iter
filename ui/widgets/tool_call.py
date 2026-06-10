@@ -221,7 +221,9 @@ class ToolCall(VerticalGroup):
             await body.mount(Static(f"[b $text-error]error:[/] {error}"))
             rendered_any = True
         if diff and self.tool_name in ("Edit", "Write"):
-            await body.mount(Markdown(f"```diff\n{diff.strip()}\n```"))
+            from ui.widgets.diff_view import DiffView
+            path = self.arguments.get("path")
+            await body.mount(DiffView(diff.strip(), path=str(path) if path else None))
             rendered_any = True
         elif output:
             stripped = output.strip()

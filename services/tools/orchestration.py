@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
-from tools.base import Tool, ToolInvocation, ToolResult
+from tools.base import Tool, ToolInvocation, ToolResult, truncate_tool_result
 
 logger = logging.getLogger(__name__)
 
@@ -104,23 +104,9 @@ async def execute_tool_call(
             )
         else:
             result = await tool.execute(invocation=invocation)
-
-            # Enforce max result size with disk persistence (Claude Code: maxResultSizeChars + toolResultStorage)
-            from services.tools.result_storage import maybe_persist_large_result
-            if len(result.output) > tool.max_result_size_chars:
-                result = ToolResult(
-                    success=result.success,
-                    output=maybe_persist_large_result(
-                        output=result.output,
-                        tool_name=call.name,
-                        tool_use_id=call.call_id,
-                        max_chars=tool.max_result_size_chars,
-                    ),
-                    error=result.error,
-                    truncated=True,
-                    metadata=result.metadata,
-                    exit_code=result.exit_code,
-                )
+            # Enforce max result size; call_id triggers the persist-to-disk
+            # branch inside truncate_tool_result for any overflow.
+            result = truncate_tool_result(result, tool, call_id=call.call_id)
 
     except Exception as e:
         logger.exception(f"Tool {call.name} raised unexpected error")

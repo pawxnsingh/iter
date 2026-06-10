@@ -49,12 +49,12 @@ def _text(widget) -> str:
 async def test_stream_many_deltas_without_drops() -> None:
     """Post 200 TextDelta messages; assistant block must end with the full text."""
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.messages import AgentEnded, AgentStarted, TextComplete, TextDelta
     from ui.widgets.agent_response import AgentResponse
     from ui.widgets.conversation import Conversation
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)
@@ -84,7 +84,7 @@ async def test_stream_many_deltas_without_drops() -> None:
 async def test_tool_interleaved_with_text() -> None:
     """Two tools + two text blocks in sequence — all mount in the right order."""
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.messages import (
         AgentEnded, AgentStarted, TextComplete, TextDelta,
         ToolCompleted, ToolStarted,
@@ -93,7 +93,7 @@ async def test_tool_interleaved_with_text() -> None:
     from ui.widgets.conversation import Conversation
     from ui.widgets.tool_call import ToolCall
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)
@@ -131,11 +131,11 @@ async def test_tool_interleaved_with_text() -> None:
 async def test_multiple_sequential_slash_commands() -> None:
     """Three slash commands in a row — all execute, no state leaks."""
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.messages import UserInputSubmitted
     from ui.widgets.conversation import Conversation, Note
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)
@@ -164,12 +164,12 @@ async def test_multiple_sequential_slash_commands() -> None:
 async def test_tool_running_before_completion() -> None:
     """Without a ToolCompleted, the ToolCall widget stays in the running state."""
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.messages import ToolStarted
     from ui.widgets.conversation import Conversation
     from ui.widgets.tool_call import ToolCall
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)
@@ -190,12 +190,12 @@ async def test_tool_running_before_completion() -> None:
 @pytest.mark.asyncio
 async def test_flash_severity_styling() -> None:
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.messages import Flash as FlashMsg
     from ui.widgets.conversation import Conversation
     from ui.widgets.flash import Flash
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)
@@ -221,11 +221,11 @@ async def test_flash_severity_styling() -> None:
 async def test_slash_clear_removes_context() -> None:
     """/clear should say 'Conversation cleared.'."""
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.messages import UserInputSubmitted
     from ui.widgets.conversation import Conversation, Note
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)
@@ -244,11 +244,11 @@ async def test_slash_clear_removes_context() -> None:
 async def test_abort_action_does_not_crash() -> None:
     """MainScreen Ctrl+C on empty prompt calls abort — no crash, no wedge."""
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.widgets.conversation import Conversation
     from ui.widgets.prompt import PromptTextArea
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)
@@ -267,11 +267,11 @@ async def test_abort_action_does_not_crash() -> None:
 async def test_slash_chosen_from_overlay_triggers_command() -> None:
     """SlashCommandChosen → command executes in Conversation."""
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.messages import SlashCommandChosen
     from ui.widgets.conversation import Conversation, Note
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)

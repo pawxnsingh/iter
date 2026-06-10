@@ -42,10 +42,10 @@ async def test_slash_key_does_not_leak_into_prompt() -> None:
     after a command is chosen.
     """
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.widgets.prompt import Prompt, PromptTextArea
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         ta = app.query_one(PromptTextArea)
@@ -69,10 +69,10 @@ async def test_slash_key_ignored_when_prompt_not_empty() -> None:
     must NOT open — '/' is just a regular character in that context.
     """
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.widgets.prompt import Prompt, PromptTextArea
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         ta = app.query_one(PromptTextArea)
@@ -100,12 +100,12 @@ async def test_main_screen_forwards_user_input_to_conversation() -> None:
     ends up mounted with the right body.
     """
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.messages import UserInputSubmitted
     from ui.widgets.conversation import Conversation
     from ui.widgets.user_input import UserInput
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)
@@ -128,7 +128,7 @@ async def test_main_screen_forwards_user_input_to_conversation() -> None:
 async def test_main_screen_forwards_slash_chosen_to_conversation() -> None:
     """SlashCommandChosen must also be forwarded, not just UserInputSubmitted."""
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.messages import SlashCommandChosen
     from ui.widgets.conversation import Conversation, Note
 
@@ -136,7 +136,7 @@ async def test_main_screen_forwards_slash_chosen_to_conversation() -> None:
         blob = getattr(w, "_content", None)
         return str(blob) if blob is not None else str(w.render())
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)
@@ -163,7 +163,7 @@ async def test_slash_command_does_not_hang_when_agent_absent() -> None:
     an error Note, not hang forever on the _agent_ready event.
     """
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.messages import UserInputSubmitted
     from ui.widgets.conversation import Conversation, Note
 
@@ -171,7 +171,7 @@ async def test_slash_command_does_not_hang_when_agent_absent() -> None:
         blob = getattr(w, "_content", None)
         return str(blob) if blob is not None else str(w.render())
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)

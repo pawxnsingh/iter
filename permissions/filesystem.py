@@ -86,12 +86,6 @@ def path_in_working_directory(path: str, working_dirs: tuple[str, ...]) -> bool:
     return False
 
 
-def is_path_traversal(path: str) -> bool:
-    """Check if path contains traversal sequences."""
-    normalized = os.path.normpath(path)
-    return '..' in normalized.split(os.sep)
-
-
 def is_sensitive_path(path: str) -> bool:
     """
     Check if path targets sensitive system locations.

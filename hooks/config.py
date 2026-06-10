@@ -43,3 +43,17 @@ def reset_hooks_snapshot() -> None:
     """Reset snapshot (testing only)."""
     global _snapshot
     _snapshot = None
+
+
+def swap_hooks_snapshot(new_snapshot: dict[str, list[HookCommand]] | None):
+    """Atomically replace the snapshot, returning the previous one.
+
+    Used to save/restore around a nested Agent: a sub-agent's __aenter__ calls
+    capture_hooks_snapshot() and would otherwise clobber the parent session's
+    hooks for the rest of the run. The caller restores the parent's snapshot
+    once the sub-agent exits.
+    """
+    global _snapshot
+    prev = _snapshot
+    _snapshot = new_snapshot
+    return prev

@@ -25,6 +25,7 @@ import fnmatch
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 from core_types.hooks import HookCommand, HookEvent, HookResult
@@ -71,11 +72,17 @@ class HookExecutor:
         tool_name: str,
         tool_input: dict[str, Any],
         session_id: str = "",
-        cwd: str = "",
+        cwd: Path | str = "",
+        tool_use_id: str = "",
+        transcript_path: str = "",
+        permission_mode: str | None = None,
     ) -> HookResult:
+        cwd = str(cwd)
         """
         Run PreToolUse hooks. Can block execution or modify input.
-        Claude Code: executePreToolUseHooks()
+        Claude Code: executePreToolUseHooks() — stdin payload mirrors
+        PreToolUseHookInput = createBaseHookInput ∪ {hook_event_name,
+        tool_name, tool_input, tool_use_id}.
         """
         hooks = self._hooks.get(HookEvent.PRE_TOOL_USE, [])
         result = HookResult()
@@ -86,11 +93,14 @@ class HookExecutor:
                 continue
 
             hook_result = await self._execute_hook(hook, {
-                "hook_event_name": HookEvent.PRE_TOOL_USE,
+                "hook_event_name": HookEvent.PRE_TOOL_USE.value,
+                "session_id": session_id,
+                "transcript_path": transcript_path,
+                "cwd": cwd,
+                "permission_mode": permission_mode,
                 "tool_name": tool_name,
                 "tool_input": tool_input,
-                "session_id": session_id,
-                "cwd": cwd,
+                "tool_use_id": tool_use_id,
             })
 
             # Blocking error stops execution
@@ -114,11 +124,16 @@ class HookExecutor:
         tool_input: dict[str, Any],
         tool_output: str,
         session_id: str = "",
-        cwd: str = "",
+        cwd: Path | str = "",
+        tool_use_id: str = "",
+        transcript_path: str = "",
+        permission_mode: str | None = None,
     ) -> HookResult:
+        cwd = str(cwd)
         """
         Run PostToolUse hooks. Can add context or stop continuation.
-        Claude Code: executePostToolUseHooks()
+        Claude Code: executePostToolUseHooks() — stdin payload mirrors
+        PostToolUseHookInput.
         """
         hooks = self._hooks.get(HookEvent.POST_TOOL_USE, [])
         result = HookResult()
@@ -128,17 +143,104 @@ class HookExecutor:
                 continue
 
             hook_result = await self._execute_hook(hook, {
-                "hook_event_name": HookEvent.POST_TOOL_USE,
+                "hook_event_name": HookEvent.POST_TOOL_USE.value,
+                "session_id": session_id,
+                "transcript_path": transcript_path,
+                "cwd": cwd,
+                "permission_mode": permission_mode,
                 "tool_name": tool_name,
                 "tool_input": tool_input,
-                "tool_output": tool_output[:10000],  # Truncate for hook
-                "session_id": session_id,
-                "cwd": cwd,
+                "tool_use_id": tool_use_id,
+                "tool_response": tool_output[:10000],
             })
 
             if hook_result.prevent_continuation:
                 result.prevent_continuation = True
 
+            if hook_result.additional_context:
+                result.additional_context = hook_result.additional_context
+
+        return result
+
+    async def run_post_tool_failure_hooks(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        error: str,
+        session_id: str = "",
+        cwd: Path | str = "",
+        tool_use_id: str = "",
+        transcript_path: str = "",
+        permission_mode: str | None = None,
+        is_interrupt: bool = False,
+    ) -> HookResult:
+        """
+        Run PostToolUseFailure hooks — fired when a tool FAILS (vs PostToolUse
+        for success). Claude Code: executePostToolUseFailureHooks() in
+        services/tools/toolHooks.ts. stdin mirrors PostToolUseFailureHookInput.
+        """
+        cwd = str(cwd)
+        hooks = self._hooks.get(HookEvent.POST_TOOL_USE_FAILURE, [])
+        result = HookResult()
+
+        for hook in hooks:
+            if hook.match and not fnmatch.fnmatch(tool_name, hook.match):
+                continue
+
+            hook_result = await self._execute_hook(hook, {
+                "hook_event_name": HookEvent.POST_TOOL_USE_FAILURE.value,
+                "session_id": session_id,
+                "transcript_path": transcript_path,
+                "cwd": cwd,
+                "permission_mode": permission_mode,
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+                "tool_use_id": tool_use_id,
+                "error": error[:10000],
+                "is_interrupt": is_interrupt,
+            })
+
+            if hook_result.prevent_continuation:
+                result.prevent_continuation = True
+            if hook_result.additional_context:
+                result.additional_context = hook_result.additional_context
+
+        return result
+
+    async def run_stop_hooks(
+        self,
+        last_assistant_message: str = "",
+        session_id: str = "",
+        cwd: Path | str = "",
+        transcript_path: str = "",
+        permission_mode: str | None = None,
+        stop_hook_active: bool = False,
+    ) -> HookResult:
+        """
+        Run Stop hooks — fired when the main agent turn finishes (model stopped
+        without more tool calls). A blocking Stop hook forces the agent to keep
+        going (CC: executeStopHooks → blockingError becomes a user message).
+        stdin mirrors StopHookInput.
+        """
+        cwd = str(cwd)
+        hooks = self._hooks.get(HookEvent.STOP, [])
+        result = HookResult()
+
+        for hook in hooks:
+            hook_result = await self._execute_hook(hook, {
+                "hook_event_name": HookEvent.STOP.value,
+                "session_id": session_id,
+                "transcript_path": transcript_path,
+                "cwd": cwd,
+                "permission_mode": permission_mode,
+                "stop_hook_active": stop_hook_active,
+                "last_assistant_message": last_assistant_message,
+            })
+
+            # A blocking Stop hook means "don't stop" — its message is fed back
+            # to the model so it keeps working.
+            if hook_result.blocking_error:
+                result.blocking_error = hook_result.blocking_error
             if hook_result.additional_context:
                 result.additional_context = hook_result.additional_context
 
@@ -185,22 +287,32 @@ class HookExecutor:
     async def _execute_command_hook(self, hook: HookCommand, env_data: dict) -> HookResult:
         """
         Execute a shell command hook.
-        Claude Code: Hook JSON output protocol from stdout.
+
+        Claude Code parity (utils/hooks.ts):
+          - Env: `CLAUDE_PROJECT_DIR` (always), filtered subprocess env.
+          - stdin: hook input as JSON (createBaseHookInput + event-specific
+            fields). One line, UTF-8.
+          - stdout: optional JSON response with the hook protocol.
         """
-        # Filter secrets from environment before passing to hook subprocess
         env = _filter_env_secrets(os.environ)
-        env["HOOK_DATA"] = json.dumps(env_data, default=str)
+        cwd_val = env_data.get("cwd")
+        if cwd_val:
+            env["CLAUDE_PROJECT_DIR"] = str(cwd_val)
+
+        # Build the CC stdin payload. Pydantic-free dict → JSON line.
+        json_input = json.dumps(env_data, default=str) + "\n"
 
         try:
             proc = await asyncio.create_subprocess_shell(
                 hook.command,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
             )
             try:
                 stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(),
+                    proc.communicate(input=json_input.encode("utf-8")),
                     timeout=hook.timeout or DEFAULT_HOOK_TIMEOUT,
                 )
             except asyncio.TimeoutError:
@@ -253,7 +365,9 @@ class HookExecutor:
         """Execute an HTTP webhook hook."""
         try:
             import httpx
-            async with httpx.AsyncClient(timeout=hook.timeout or 30) as client:
+            async with httpx.AsyncClient(
+                timeout=hook.timeout or DEFAULT_HOOK_TIMEOUT
+            ) as client:
                 response = await client.post(hook.url, json=env_data)
                 if response.status_code == 200:
                     try:

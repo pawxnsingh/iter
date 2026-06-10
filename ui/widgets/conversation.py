@@ -48,8 +48,6 @@ from ui.messages import (
 )
 from ui.widgets.agent_response import AgentResponse
 from ui.widgets.agent_thought import AgentThought
-# NOTE: Cursor / CursorContainer will be wired into the Window layout in a
-# follow-up. They're imported by ui.widgets.cursor and ready to use.
 from ui.widgets.flash import Flash as FlashWidget
 from ui.widgets.note import Note
 from ui.widgets.throbber import Throbber
@@ -176,6 +174,8 @@ class Conversation(VerticalGroup):
         finally:
             self._agent_ready.set()
 
+    # A turn = one user message processed end-to-end, 
+    # regardless of how many LLM round-trips happen inside it.
     async def _run_one_turn(self, agent: Agent, message: str) -> None:
         self.post_message(AgentStarted())
         self._current_response = None
@@ -224,14 +224,41 @@ class Conversation(VerticalGroup):
 
     # ─── Permission flow ──────────────────────────────────────────────
 
-    async def _permission_prompt(
-        self, tool_name: str, message: str, is_destructive: bool
-    ) -> bool:
-        from ui.screens.permission_modal import PermissionModal
-        result = await self.app.push_screen_wait(
-            PermissionModal(tool_name, message, is_destructive)
+    async def _permission_prompt(self, tool_name: str, message: str, is_destructive: bool) -> bool:
+        """Push the fullscreen PermissionsScreen and convert its 4-way decision
+        back to a bool for the Agent's permission_prompt_fn signature.
+
+        "allow_always" / "reject_always" are recorded on the active session
+        rule set so we don't ask again for matching tool calls."""
+        from ui.screens.permissions import PermissionsScreen
+
+        decision = await self.app.push_screen_wait(
+            PermissionsScreen(
+                tool_name,
+                message,
+                is_destructive=is_destructive,
+            )
         )
-        return bool(result)
+        if decision in ("allow_always", "reject_always"):
+            self._remember_decision(tool_name, decision)
+        return decision in ("allow_once", "allow_always")
+
+    def _remember_decision(self, tool_name: str, decision: str) -> None:
+        """Cache an always-decision for the current session.
+
+        Best-effort: if the agent's permission rules don't expose a setter we
+        still showed the right UI; the user just gets re-prompted next time.
+        """
+        try:
+            rules = getattr(self._agent.session, "permission_rules", None) if self._agent else None
+            if rules is None:
+                return
+            if decision == "allow_always" and hasattr(rules, "allow"):
+                rules.allow(tool_name)
+            elif decision == "reject_always" and hasattr(rules, "deny"):
+                rules.deny(tool_name)
+        except Exception:
+            pass
 
     # ─── Input & slash commands ───────────────────────────────────────
 

@@ -4,7 +4,9 @@ import os
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from core_types.permissions import PermissionMode
 
 
 class ModelConfig(BaseModel):
@@ -67,6 +69,10 @@ class Config(BaseModel):
         default_factory=ShellEnvironmentPolicy
     )
     max_turns: int = Field(default=100)
+    # Optional per-message token budget. The query loop tracks cumulative
+    # prompt + completion tokens across iterations of one user message and
+    # aborts if usage exceeds this. None = unlimited (default).
+    task_budget_tokens: int | None = Field(default=None)
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
     allowed_tools: list[str] | None = Field(
@@ -74,13 +80,27 @@ class Config(BaseModel):
         description="If set, only these tools will be available to the agent",
     )
 
+    # Permission rules in our internal dict shape: {tool_name: [content_pattern]}.
+    # An empty pattern "" matches any call to that tool.
+    # CC settings.json strings like "Bash(echo *)" are parsed via
+    # permissions.rules.parse_rule_strings_to_dict() into this shape.
+    allow_rules: dict[str, list[str]] = Field(default_factory=dict)
+    deny_rules: dict[str, list[str]] = Field(default_factory=dict)
+    ask_rules: dict[str, list[str]] = Field(default_factory=dict)
+
     developer_instructions: str | None = None
     user_instructions: str | None = None
 
     # Permission mode (Claude Code: 'default', 'plan', 'bypass', 'accept_edits', 'dont_ask')
-    permission_mode: str = Field(default="default")
+    # Pydantic accepts plain strings here and coerces them to the enum, so
+    # `Config(permission_mode="plan")` and `c.permission_mode = "plan"` both work.
+    permission_mode: PermissionMode = Field(default=PermissionMode.DEFAULT)
 
     debug: bool = Field(default=False)
+
+    # Coerce strings → enum on assignment so `config.permission_mode = "plan"`
+    # is validated, not stored as a stray str that downstream code mishandles.
+    model_config = ConfigDict(validate_assignment=True, use_enum_values=False)
 
     @property
     def api_key(self) -> str:
@@ -93,6 +113,17 @@ class Config(BaseModel):
     @property
     def api_version(self) -> str:
         return os.environ.get("AZURE_OPENAI_API_VERSION")
+
+    @property
+    def azure_deployment(self) -> str | None:
+        """Azure deployment name for the request `model` field.
+
+        Azure OpenAI routes by deployment name, which is decoupled from the
+        underlying model id (a deployment can be named anything). When set, it
+        MUST be used as the request `model`; the config model name is not a
+        valid Azure deployment and yields a 404 DeploymentNotFound.
+        """
+        return os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
 
     @property
     def model_name(self) -> str:

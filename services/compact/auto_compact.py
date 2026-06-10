@@ -227,9 +227,21 @@ async def auto_compact_if_needed(
         f"Autocompact triggered: {pre_compact_tokens} tokens >= {threshold} threshold"
     )
 
+    # PreCompact hook (CC: executePreCompactHooks, trigger='auto'). May return
+    # custom instructions that get folded into the summarization prompt.
+    custom_instructions = await _fire_pre_compact(trigger="auto")
+
     try:
-        # Call the LLM to generate a conversation summary
-        summary = await compact_fn(messages, system_prompt)
+        # Call the LLM to generate a conversation summary. Pass PreCompact's
+        # custom instructions when the compact_fn accepts them (the injected
+        # create_compact_fn does; older 2-arg fns are tolerated).
+        try:
+            summary = await compact_fn(messages, system_prompt, custom_instructions)
+        except TypeError:
+            summary = await compact_fn(messages, system_prompt)
+
+        # PostCompact hook (CC: executePostCompactHooks) — receives the summary.
+        await _fire_post_compact(trigger="auto", compact_summary=summary)
 
         # Build post-compact messages: [summary] + last N messages
         compacted = build_post_compact_messages(messages, summary)
@@ -296,13 +308,12 @@ def build_post_compact_messages(
     Claude Code keeps attachments, hook results, and file snapshots too,
     but we start with the core pattern: summary + recent messages.
     """
-    from services.compact.prompt import (
-        POST_COMPACT_USER_MESSAGE,
-        format_compact_summary,
-    )
+    from services.compact.prompt import get_compact_user_summary_message
 
-    formatted_summary = format_compact_summary(summary)
-    summary_content = POST_COMPACT_USER_MESSAGE.format(summary=formatted_summary)
+    # Single source of truth for the resume message (CC: getCompactUserSummaryMessage).
+    summary_content = get_compact_user_summary_message(
+        summary, suppress_follow_up_questions=True
+    )
 
     # Import here to avoid circular import
     from context.manager import MessageItem
@@ -317,3 +328,57 @@ def build_post_compact_messages(
     recent = messages[-POST_COMPACT_KEEP_RECENT:] if len(messages) > POST_COMPACT_KEEP_RECENT else []
 
     return [summary_msg] + recent
+
+
+# ── Compaction lifecycle hooks (CC parity) ───────────────────────────
+
+def _compact_hook_executor():
+    """Build a HookExecutor from the frozen session snapshot, or None.
+
+    Compaction runs deep in the context manager with no HookExecutor in scope,
+    so we read the module-global hooks snapshot — the same source CC's compact
+    pipeline reaches for executePreCompactHooks/executePostCompactHooks.
+    """
+    from hooks.config import get_hooks_from_snapshot
+    from hooks.executor import HookExecutor
+
+    snapshot = get_hooks_from_snapshot()
+    if not snapshot:
+        return None
+    return HookExecutor(snapshot)
+
+
+async def _fire_pre_compact(trigger: str) -> str | None:
+    """Fire PreCompact (CC: executePreCompactHooks). Returns custom instructions
+    a hook may supply to steer the summary, or None."""
+    from core_types.hooks import HookEvent
+
+    executor = _compact_hook_executor()
+    if executor is None:
+        return None
+    try:
+        result = await executor.run_event_hooks(
+            event=HookEvent.PRE_COMPACT.value,
+            data={"trigger": trigger, "custom_instructions": None},
+        )
+        # A PreCompact hook returns instructions via stdout → additional_context.
+        return result.additional_context or None
+    except Exception:
+        logger.debug("PreCompact hook failed", exc_info=True)
+        return None
+
+
+async def _fire_post_compact(trigger: str, compact_summary: str) -> None:
+    """Fire PostCompact (CC: executePostCompactHooks) with the produced summary."""
+    from core_types.hooks import HookEvent
+
+    executor = _compact_hook_executor()
+    if executor is None:
+        return
+    try:
+        await executor.run_event_hooks(
+            event=HookEvent.POST_COMPACT.value,
+            data={"trigger": trigger, "compact_summary": compact_summary},
+        )
+    except Exception:
+        logger.debug("PostCompact hook failed", exc_info=True)

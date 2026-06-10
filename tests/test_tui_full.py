@@ -285,8 +285,8 @@ async def test_tool_call_error_auto_expands() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tool_call_diff_mounts_markdown() -> None:
-    from textual.widgets import Markdown
+async def test_tool_call_diff_mounts_diffview() -> None:
+    from ui.widgets.diff_view import DiffView
     from ui.widgets.tool_call import ToolCall
 
     t = ToolCall("id4", "Edit", {"path": "foo.py"})
@@ -303,8 +303,8 @@ async def test_tool_call_diff_mounts_markdown() -> None:
             truncated=False,
         )
         await pilot.pause()
-        # Diff should have been rendered as a Markdown code fence
-        assert list(t.query(Markdown)), "diff should have rendered as Markdown"
+        # Diff is rendered with our homegrown DiffView widget
+        assert list(t.query(DiffView)), "diff should have rendered as DiffView"
 
 
 @pytest.mark.asyncio
@@ -363,7 +363,7 @@ async def test_full_agent_turn_simulation() -> None:
     the test is isolated from LLM availability.
     """
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.messages import (
         AgentEnded,
         AgentStarted,
@@ -373,7 +373,7 @@ async def test_full_agent_turn_simulation() -> None:
     from ui.widgets.agent_response import AgentResponse
     from ui.widgets.conversation import Conversation
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)
@@ -411,12 +411,12 @@ async def test_full_agent_turn_simulation() -> None:
 async def test_full_tool_call_event_flow() -> None:
     """ToolStarted mounts a ToolCall; ToolCompleted populates and marks it."""
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.messages import ToolCompleted, ToolStarted
     from ui.widgets.conversation import Conversation
     from ui.widgets.tool_call import ToolCall
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)
@@ -450,12 +450,12 @@ async def test_full_tool_call_event_flow() -> None:
 async def test_flash_message_appears_on_conversation() -> None:
     """Posting Flash to Conversation should show the Flash widget."""
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.messages import Flash as FlashMsg
     from ui.widgets.conversation import Conversation
     from ui.widgets.flash import Flash
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)
@@ -479,10 +479,10 @@ async def test_flash_message_appears_on_conversation() -> None:
 async def test_ctrl_c_clears_prompt_text() -> None:
     """With text in the prompt, Ctrl+C should clear it (not abort)."""
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.widgets.prompt import PromptTextArea
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         ta = app.query_one(PromptTextArea)
@@ -499,9 +499,9 @@ async def test_ctrl_c_clears_prompt_text() -> None:
 async def test_ctrl_q_exits_app() -> None:
     """Ctrl+Q triggers a clean exit."""
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         await pilot.press("ctrl+q")
@@ -511,62 +511,8 @@ async def test_ctrl_q_exits_app() -> None:
         assert app._exit, "Ctrl+Q did not request an exit"
 
 
-async def _run_permission_test(
-    *, key: str, is_destructive: bool, expected: bool
-) -> None:
-    """Helper: push a PermissionModal from a worker, press a key, check result."""
-    from textual import work
-    from textual.app import App, ComposeResult
-    from textual.widgets import Static
-    from ui.screens.permission_modal import PermissionModal
-
-    result_holder: dict = {}
-
-    class _Host(App):
-        def compose(self) -> ComposeResult:
-            yield Static("host")
-
-        def on_mount(self) -> None:
-            self._show_modal()
-
-        @work
-        async def _show_modal(self) -> None:
-            result_holder["value"] = await self.push_screen_wait(
-                PermissionModal("Bash", "some command", is_destructive=is_destructive)
-            )
-            self.exit()
-
-    app = _Host()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        for _ in range(30):
-            await pilot.pause(0.02)
-            if isinstance(app.screen, PermissionModal):
-                break
-        assert isinstance(app.screen, PermissionModal), "modal did not appear"
-        await pilot.press(key)
-        for _ in range(40):
-            await pilot.pause(0.02)
-            if "value" in result_holder:
-                break
-        assert result_holder.get("value") is expected, (
-            f"expected {expected}, got {result_holder.get('value')!r}"
-        )
-
-
-@pytest.mark.asyncio
-async def test_permission_modal_approves_on_y() -> None:
-    await _run_permission_test(key="y", is_destructive=True, expected=True)
-
-
-@pytest.mark.asyncio
-async def test_permission_modal_denies_on_escape() -> None:
-    await _run_permission_test(key="escape", is_destructive=False, expected=False)
-
-
-@pytest.mark.asyncio
-async def test_permission_modal_denies_on_n() -> None:
-    await _run_permission_test(key="n", is_destructive=False, expected=False)
+# Permission tests now live in test_toad_port_pass2.py against the new
+# fullscreen PermissionsScreen. The basic PermissionModal was removed.
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -579,12 +525,12 @@ async def test_slash_overlay_filters_results() -> None:
     """Typing into the slash overlay should narrow the option list."""
     from config.config import Config
     from textual.widgets import Input, OptionList
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.messages import InvokeSlashComplete
     from ui.widgets.prompt import Prompt
     from ui.widgets.slash_complete import SlashComplete
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         prompt = app.query_one(Prompt)
@@ -610,11 +556,11 @@ async def test_slash_overlay_filters_results() -> None:
 async def test_slash_command_dispatch_end_to_end() -> None:
     """/help → SlashResult → Note with 'Available commands' body."""
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.messages import UserInputSubmitted
     from ui.widgets.conversation import Conversation, Note
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)
@@ -635,11 +581,11 @@ async def test_slash_command_dispatch_end_to_end() -> None:
 async def test_unknown_slash_command_surfaces_error() -> None:
     """/nosuch should render a 'Unknown command' note, not crash."""
     from config.config import Config
-    from ui.app import PieAgentApp
+    from ui.app import NewtApp
     from ui.messages import UserInputSubmitted
     from ui.widgets.conversation import Conversation, Note
 
-    app = PieAgentApp(Config(cwd=ROOT))
+    app = NewtApp(Config(cwd=ROOT))
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)

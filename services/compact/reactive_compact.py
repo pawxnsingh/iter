@@ -20,10 +20,7 @@ import logging
 
 from context.manager import MessageItem
 from services.compact.auto_compact import estimate_messages_tokens
-from services.compact.prompt import (
-    POST_COMPACT_USER_MESSAGE,
-    format_compact_summary,
-)
+from services.compact.prompt import get_compact_user_summary_message
 from utils.text import count_tokens
 
 logger = logging.getLogger(__name__)
@@ -57,9 +54,10 @@ async def try_reactive_compact(
             logger.warning("Reactive compact returned empty summary")
             return None
 
-        # Build post-compact messages
-        formatted = format_compact_summary(summary)
-        summary_content = POST_COMPACT_USER_MESSAGE.format(summary=formatted)
+        # Build post-compact resume message (single source of truth).
+        summary_content = get_compact_user_summary_message(
+            summary, suppress_follow_up_questions=True
+        )
 
         summary_msg = MessageItem(
             role="user",

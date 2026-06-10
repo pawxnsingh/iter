@@ -135,22 +135,39 @@ def extract_hooks_from_settings(settings: dict[str, Any]) -> dict[str, list[Hook
     return hooks_config
 
 
-def extract_permission_rules(settings: dict[str, Any]) -> dict[str, dict[str, list[str]]]:
+def extract_permission_rules(
+    settings: dict[str, Any],
+) -> dict[str, dict[str, list[str]]]:
     """
-    Extract permission rules from settings.
-    Returns: {"allow": {"source": [patterns]}, "deny": {...}, "ask": {...}}
+    Extract permission rules from CC-shape settings.json and parse them into
+    the runtime context shape used by PermissionChecker.
+
+    Input (CC settings.json):
+      {"permissions": {"allow": ["Bash(echo *)", "Read"],
+                       "deny":  ["Bash(rm *)"],
+                       "ask":   ["Write(/etc/*)"]}}
+
+    Output (matches ToolPermissionContext.{allow,deny,ask}_rules):
+      {"allow": {"Bash": ["echo *"], "Read": [""]},
+       "deny":  {"Bash": ["rm *"]},
+       "ask":   {"Write": ["/etc/*"]}}
+
+    Each `Tool(content)` rule string is parsed via CC's exact algorithm
+    (parse_permission_rule_string), then grouped by tool name. Tool-wide
+    rules ("Bash") become an empty-string pattern that matches any call.
     """
+    from permissions.rules import parse_rule_strings_to_dict
+
     perms = settings.get("permissions", {})
     if not isinstance(perms, dict):
         return {"allow": {}, "deny": {}, "ask": {}}
 
-    result = {"allow": {}, "deny": {}, "ask": {}}
-    for behavior in ["allow", "deny", "ask"]:
-        rules = perms.get(behavior, [])
-        if isinstance(rules, list):
-            result[behavior] = {"settings": rules}
-
-    return result
+    out: dict[str, dict[str, list[str]]] = {"allow": {}, "deny": {}, "ask": {}}
+    for behavior in ("allow", "deny", "ask"):
+        raw = perms.get(behavior, [])
+        if isinstance(raw, list):
+            out[behavior] = parse_rule_strings_to_dict(raw)
+    return out
 
 
 def save_settings(path: Path, settings: dict[str, Any]) -> None:
