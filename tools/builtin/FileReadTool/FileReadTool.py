@@ -89,9 +89,9 @@ class FileReadTool(Tool):
         if media_type:
             return self._read_image(path, media_type)
 
-        # PDFs: extract text if a PDF library is available; otherwise return a
-        # clear message rather than dumping raw PDF bytes as "lines" (which the
-        # generic text path would do, since a PDF is not flagged binary).
+        # PDFs: render pages to images for the model's vision (CC parity).
+        # A PDF is not flagged binary, so without this the generic text path
+        # would dump raw PDF bytes as "lines".
         if path.suffix.lower() == ".pdf":
             return self._read_pdf(path, params.pages)
 
@@ -198,55 +198,67 @@ class FileReadTool(Tool):
             )
 
     def _read_pdf(self, path, pages: str | None) -> ToolResult:
-        """Extract PDF text (CC parity: PDF reading). Uses pypdf if installed;
-        honors the `pages` range (e.g. "1-5"). Without a PDF lib, returns a
-        clear message instead of dumping raw PDF bytes."""
-        try:
-            import pypdf  # type: ignore
-        except Exception:
-            return ToolResult.error_result(
-                error=f"Cannot extract PDF text: no PDF library installed ({path.name}).",
-                output="Install 'pypdf' to enable PDF reading, or convert the PDF to text first.",
-            )
+        """Read a PDF as VISION (CC parity: FileReadTool.ts PDF branch).
 
-        try:
-            reader = pypdf.PdfReader(str(path))
-        except Exception as e:
-            return ToolResult.error_result(f"Failed to open PDF: {e}")
+        CC never extracts PDF text — it renders pages to JPEG images via
+        pdftoppm and feeds them to the model as image blocks. We follow CC's
+        page-extraction branch (the only one valid for image-input providers):
 
-        total = len(reader.pages)
-        wanted = self._parse_page_range(pages, total) if pages else list(range(total))
-        wanted = wanted[:20]  # CC: max 20 pages per request
-
-        parts: list[str] = []
-        for i in wanted:
-            if 0 <= i < total:
-                try:
-                    parts.append(f"--- Page {i + 1} ---\n{reader.pages[i].extract_text() or ''}")
-                except Exception:
-                    parts.append(f"--- Page {i + 1} ---\n[could not extract text]")
-
-        return ToolResult.success_result(
-            "\n\n".join(parts) or "PDF contains no extractable text.",
-            metadata={"path": str(path), "pdf": True, "total_pages": total,
-                      "pages_read": len(wanted)},
+          - `pages` given  -> render exactly that 1-indexed range (<= 20 pages).
+          - no `pages`     -> a whole-PDF read is allowed only for small PDFs
+                              (<= PDF_AT_MENTION_INLINE_THRESHOLD pages); larger
+                              ones must be read in ranges via `pages`.
+        """
+        from tools.builtin.shared.pdf import (
+            PDF_AT_MENTION_INLINE_THRESHOLD,
+            PDF_MAX_PAGES_PER_READ,
+            PDFRenderError,
+            get_pdf_page_count,
+            page_range_count,
+            parse_pdf_page_range,
+            render_pdf_pages,
         )
 
-    @staticmethod
-    def _parse_page_range(pages: str, total: int) -> list[int]:
-        """Parse "1-5", "3", "1-5,8" → 0-based page indices."""
-        out: list[int] = []
-        for chunk in str(pages).split(","):
-            chunk = chunk.strip()
-            if "-" in chunk:
-                a, _, b = chunk.partition("-")
-                try:
-                    out.extend(range(int(a) - 1, int(b)))
-                except ValueError:
-                    continue
-            elif chunk.isdigit():
-                out.append(int(chunk) - 1)
-        return out
+        first_page: int | None = None
+        last_page: float | None = None
+
+        if pages:
+            parsed = parse_pdf_page_range(pages)
+            if parsed is None:
+                return ToolResult.error_result(
+                    f'Invalid pages parameter: "{pages}". Use formats like '
+                    '"1-5", "3", or "10-20". Pages are 1-indexed.'
+                )
+            first_page, last_page = parsed
+            if page_range_count(first_page, last_page) > PDF_MAX_PAGES_PER_READ:
+                return ToolResult.error_result(
+                    f'Page range "{pages}" exceeds maximum of '
+                    f"{PDF_MAX_PAGES_PER_READ} pages per request. Please use a "
+                    "smaller range."
+                )
+        else:
+            # Whole-PDF read: gate on page count so we don't blow the per-request
+            # image budget (CC throws here and steers to the `pages` param).
+            count = get_pdf_page_count(path)
+            if count is not None and count > PDF_AT_MENTION_INLINE_THRESHOLD:
+                return ToolResult.error_result(
+                    f"This PDF has {count} pages, which is too many to read at "
+                    'once. Use the pages parameter to read specific page ranges '
+                    f'(e.g., pages: "1-5"). Maximum {PDF_MAX_PAGES_PER_READ} '
+                    "pages per request."
+                )
+
+        try:
+            images = render_pdf_pages(path, first_page, last_page)
+        except PDFRenderError as e:
+            return ToolResult.error_result(str(e))
+
+        scope = f"pages {pages}" if pages else "all pages"
+        return ToolResult.success_result(
+            output=f"[PDF: {path.name} — rendered {len(images)} page(s) ({scope})]",
+            images=images,
+            metadata={"path": str(path), "pdf": True, "pages_read": len(images)},
+        )
 
     def _read_image(self, path, media_type: str) -> ToolResult:
         """Return an image as a base64 attachment (CC parity: image block)."""
