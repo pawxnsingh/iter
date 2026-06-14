@@ -1,8 +1,6 @@
 """
 Session storage: JSONL-based transcript persistence.
 
-Source: Claude Code src/utils/sessionStorage.ts (8K+ lines)
-
 Each message is one JSON line, append-only (crash-safe).
 Sessions can be listed, loaded, and resumed.
 
@@ -25,6 +23,28 @@ from typing import Any
 from platformdirs import user_config_dir
 
 logger = logging.getLogger(__name__)
+
+_APP_VERSION = "0.1.0"
+_git_branch_cache: dict[str, str] = {}
+
+
+def _git_branch(cwd: str) -> str:
+    """Current git branch for the cwd. Cached."""
+    if cwd in _git_branch_cache:
+        return _git_branch_cache[cwd]
+    branch = ""
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=cwd, capture_output=True, text=True, timeout=2,
+        )
+        if out.returncode == 0:
+            branch = out.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        branch = ""
+    _git_branch_cache[cwd] = branch
+    return branch
 
 
 @dataclass
@@ -55,7 +75,6 @@ def _get_project_dir(project_path: str) -> Path:
 class SessionStorage:
     """
     JSONL-based session persistence.
-    Claude Code: sessionStorage.ts — append-only JSONL transcripts.
 
     Each message is one JSON line. This is crash-safe:
     if the process dies mid-write, you lose at most one line.
@@ -63,7 +82,6 @@ class SessionStorage:
 
     def __init__(self, session_id: str, project_dir: str):
         import re
-        # Validate session_id to prevent path traversal
         if not re.match(r'^[a-zA-Z0-9_\-]{1,64}$', session_id):
             raise ValueError(f"Invalid session ID: {session_id}")
 
@@ -73,24 +91,49 @@ class SessionStorage:
         self.meta_path = base / f"{session_id}.meta.json"
         self.session_id = session_id
         self.project_dir = project_dir
-        self._last_uuid: str | None = None  # Track chain for parentUuid
+        self._last_uuid: str | None = None
 
     def append(self, role: str, content: str, **extra) -> None:
         """
         Append a message to the transcript with chain integrity (parentUuid).
-        Claude Code: messages linked via parentUuid → validates on resume.
+        messages linked via parentUuid → validates on resume.
+
+        / cwd / version / userType / isSidechain, plus our flat role/content/
+        tool fields for round-trip fidelity (nests these under `message`; we
+        keep them flat so our loader reads them directly).
         """
         import uuid as uuid_mod
         msg_uuid = str(uuid_mod.uuid4())
+        is_sidechain = extra.pop("is_sidechain", False)
         entry = {
+            "parentUuid": self._last_uuid,
+            "isSidechain": is_sidechain,
+            "userType": "external",
+            "type": "assistant" if role == "assistant" else "user",
+            "uuid": msg_uuid,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "sessionId": self.session_id,
+            "cwd": self.project_dir,
+            "version": _APP_VERSION,
+            "gitBranch": _git_branch(self.project_dir),
             "role": role,
             "content": content,
-            "uuid": msg_uuid,
-            "parent_uuid": self._last_uuid,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
             **extra,
         }
         self._last_uuid = msg_uuid
+        with open(self.path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, default=str) + "\n")
+
+    def append_summary(self, summary: str) -> None:
+        """Persist a compaction summary as a `type:'summary'` record
+ keyed to the current chain leaf via leafUuid,
+        so a resume can see that compaction happened here."""
+        entry = {
+            "type": "summary",
+            "summary": summary,
+            "leafUuid": self._last_uuid,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, default=str) + "\n")
 

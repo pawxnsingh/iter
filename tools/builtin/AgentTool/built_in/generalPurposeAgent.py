@@ -1,12 +1,11 @@
 """
-General-purpose agent definition — verbatim from Claude Code
-src/tools/AgentTool/built-in/generalPurposeAgent.ts.
+General-purpose agent definition.
 """
 
 from tools.builtin.AgentTool.built_in_types import AgentDefinition
 
 SHARED_PREFIX = (
-    "You are an agent for Claude Code, Anthropic's official CLI for Claude. "
+    "You are an agent for an interactive coding CLI. "
     "Given the user's message, you should use the tools available to complete "
     "the task. Complete the task fully—don't gold-plate, but don't leave it "
     "half-done."
@@ -26,7 +25,6 @@ Guidelines:
 - NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested."""
 
 
-# Note: absolute-path + emoji guidance is appended by enhanceSystemPromptWithEnvDetails in CC.
 def get_general_purpose_system_prompt() -> str:
     return (
         f"{SHARED_PREFIX} When you complete the task, respond with a concise "
@@ -45,6 +43,5 @@ GENERAL_PURPOSE_AGENT = AgentDefinition(
         "match in the first few tries use this agent to perform the search for you."
     ),
     tools=["*"],
-    # model intentionally omitted in CC — uses getDefaultSubagentModel()
     system_prompt=get_general_purpose_system_prompt,
 )

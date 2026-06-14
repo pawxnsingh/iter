@@ -1,5 +1,5 @@
 """
-Newt CLI — Claude Code-style coding assistant in the terminal.
+Newt CLI — -style coding assistant in the terminal.
 
 Entry point. Launches the Textual TUI (ui.app). The legacy Rich/readline
 REPL (ui.tui / PieAgent) was removed during the Textual migration; this

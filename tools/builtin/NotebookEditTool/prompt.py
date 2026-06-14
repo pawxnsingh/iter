@@ -1,6 +1,5 @@
 """
-NotebookEditTool prompt — verbatim from Claude Code
-src/tools/NotebookEditTool/prompt.ts.
+NotebookEditTool prompt.
 """
 
 DESCRIPTION = "Replace the contents of a specific cell in a Jupyter notebook."

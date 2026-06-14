@@ -1,7 +1,7 @@
 """
 TaskUpdate tool — update an existing task's fields.
 
-Source: Claude Code src/tools/TaskUpdateTool/
+Source: src/tools/TaskUpdateTool/
 """
 
 from __future__ import annotations
@@ -46,8 +46,6 @@ class TaskUpdateTool(Tool):
         if params.description:
             task.description = params.description
 
-        # TaskCompleted hook (CC: fires only on transition to completed; a
-        # blocking hook reverts the status change).
         if newly_completed:
             blocking = await fire_task_completed(task)
             if blocking:

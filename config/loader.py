@@ -10,8 +10,6 @@ from utils.errors import ConfigError
 
 logger = logging.getLogger(__name__)
 
-# ~/.config/ai-agent/config.toml (global)
-# /home/pawxnsingh/coding/Projects/volmorelabs/ai-coding-cl (local per project and that will override the globall config toml files)
 
 CONFIG_FILE_NAME = "config.toml"
 AGENT_MD_FILE_NAME = "AGENT.md"
@@ -86,9 +84,7 @@ def _merge_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, An
 
 
 def load_config(cwd: Path | None) -> Config:
-    # this is the current working dir
     cwd = cwd or Path.cwd()
-    # now we need to load the system configurations
     system_path = get_system_config_path()
 
     config_dict: dict[str, Any] = {}

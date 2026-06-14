@@ -1,8 +1,8 @@
 """
-Grep tool — ripgrep wrapper, Claude Code parity.
+Grep tool — ripgrep wrapper, parity.
 
-Source: claude-code/src/tools/GrepTool/GrepTool.ts. Shells out to `rg` and
-builds args exactly as CC does: output modes (content / files_with_matches /
+Source: Shells out to `rg` and
+builds args exactly as does: output modes (content / files_with_matches /
 count), context lines (-A/-B/-C), -n, -i, glob/type filters, multiline,
 head_limit + offset post-processing, --max-columns 500, VCS-dir exclusion.
 
@@ -23,11 +23,96 @@ from pydantic import BaseModel, Field
 
 from tools.base import Tool, ToolInvocation, ToolKind, ToolResult
 from tools.builtin.GrepTool.prompt import GREP_PROMPT
-from utils.paths import is_binary, resolve_path
+from utils.paths import display_path_rel_to_cwd, is_binary, resolve_path
 
-# VCS dirs CC excludes from every search (rg --glob '!dir').
-_VCS_DIRECTORIES_TO_EXCLUDE = (".git", ".hg", ".svn")
+_VCS_DIRECTORIES_TO_EXCLUDE = (".git", ".svn", ".hg", ".bzr", ".jj", ".sl")
 _MAX_COLUMNS = 500
+
+_DEFAULT_HEAD_LIMIT = 250
+
+
+def _apply_head_limit(
+    items: list, limit: int | None, offset: int = 0
+) -> tuple[list, int | None]:
+    """Slice items by offset+limit.
+
+    limit=0 → unlimited (offset only); limit=None → DEFAULT_HEAD_LIMIT. Returns
+    (sliced, applied_limit) where applied_limit is set only when truncation
+    actually occurred, so the model knows to paginate with offset.
+    """
+    if limit == 0:
+        return items[offset:], None
+    effective = limit if limit is not None else _DEFAULT_HEAD_LIMIT
+    sliced = items[offset:offset + effective]
+    truncated = len(items) - offset > effective
+    return sliced, (effective if truncated else None)
+
+
+def _format_limit_info(applied: int | None, offset: int) -> str:
+    """formatLimitInfo: 'limit: N'[, 'offset: M']."""
+    parts: list[str] = []
+    if applied is not None:
+        parts.append(f"limit: {applied}")
+    if offset:
+        parts.append(f"offset: {offset}")
+    return ", ".join(parts)
+
+
+def _render_grep_output(mode: str, lines: list[str], applied: int | None, offset: int) -> str:
+    """mapToolResultToToolResultBlockParam — the exact
+    model-facing text per output mode."""
+    limit_info = _format_limit_info(applied, offset)
+    if mode == "content":
+        result = "\n".join(lines) if lines else "No matches found"
+        if limit_info:
+            result += f"\n\n[Showing results with pagination = {limit_info}]"
+        return result
+    if mode == "count":
+        total = 0
+        nfiles = 0
+        for ln in lines:
+            idx = ln.rfind(":")
+            if idx > 0:
+                try:
+                    total += int(ln[idx + 1:])
+                    nfiles += 1
+                except ValueError:
+                    pass
+        raw = "\n".join(lines) if lines else "No matches found"
+        occ = "occurrence" if total == 1 else "occurrences"
+        fl = "file" if nfiles == 1 else "files"
+        pag = f" with pagination = {limit_info}" if limit_info else ""
+        return f"{raw}\n\nFound {total} total {occ} across {nfiles} {fl}.{pag}"
+    if not lines:
+        return "No files found"
+    n = len(lines)
+    fl = "file" if n == 1 else "files"
+    extra = f" {limit_info}" if limit_info else ""
+    return f"Found {n} {fl}{extra}\n" + "\n".join(lines)
+
+
+def _relativize_line(line: str, mode: str, cwd) -> str:
+    """Relativize the path portion of a ripgrep output line (toRelativePath,
+    on LAST colon; files_with_matches → the whole line is the path."""
+    if not line:
+        return line
+    if mode == "files_with_matches":
+        return display_path_rel_to_cwd(line, cwd)
+    idx = line.rfind(":") if mode == "count" else line.find(":")
+    if idx > 0:
+        return display_path_rel_to_cwd(line[:idx], cwd) + line[idx:]
+    return line
+
+
+def _sort_by_mtime(paths: list[str]) -> list[str]:
+    """Sort file paths by mtime, newest first, filename as tiebreak (
+    mid-scan doesn't break the batch."""
+    def mtime(p: str) -> float:
+        try:
+            return os.stat(p).st_mtime
+        except OSError:
+            return 0.0
+    return sorted(paths, key=lambda p: (-mtime(p), p))
 
 
 class GrepParams(BaseModel):
@@ -60,7 +145,6 @@ class GrepTool(Tool):
     prompt = GREP_PROMPT
     kind = ToolKind.READ
     schema = GrepParams
-    # CC parity: GrepTool.ts maxResultSizeChars: 20_000
     max_result_size_chars = 20_000
 
     def is_concurrency_safe(self, params: dict) -> bool:
@@ -72,6 +156,10 @@ class GrepTool(Tool):
     def get_permission_value(self, params: dict) -> str | None:
         return params.get("pattern")
 
+    def get_path(self, params: dict) -> str | None:
+        """Search root — used to gate reads to the working directory."""
+        return params.get("path") or "."
+
     async def execute(self, invocation: ToolInvocation) -> ToolResult:
         params = GrepParams(**invocation.params)
         search_path = resolve_path(invocation.cwd, params.path)
@@ -80,10 +168,9 @@ class GrepTool(Tool):
 
         rg = shutil.which("rg")
         if rg:
-            return await self._run_ripgrep(rg, params, search_path)
-        return self._run_python_fallback(params, search_path)
+            return await self._run_ripgrep(rg, params, search_path, invocation.cwd)
+        return self._run_python_fallback(params, search_path, invocation.cwd)
 
-    # ── ripgrep path (CC parity) ──────────────────────────────────────
 
     def _build_args(self, params: GrepParams, search_path: Path) -> list[str]:
         args = ["--hidden"]
@@ -114,8 +201,6 @@ class GrepTool(Tool):
                 if params.context_after is not None:
                     args += ["-A", str(params.context_after)]
 
-        # Pattern starting with '-' must be passed via -e so rg doesn't read it
-        # as a flag.
         if params.pattern.startswith("-"):
             args += ["-e", params.pattern]
         else:
@@ -126,12 +211,17 @@ class GrepTool(Tool):
 
         if params.glob:
             for raw in params.glob.split():
-                args += ["--glob", raw]
+                if "{" in raw and "}" in raw:
+                    args += ["--glob", raw]
+                else:
+                    for g in raw.split(","):
+                        if g:
+                            args += ["--glob", g]
 
         args.append(str(search_path))
         return args
 
-    async def _run_ripgrep(self, rg: str, params: GrepParams, search_path: Path) -> ToolResult:
+    async def _run_ripgrep(self, rg: str, params: GrepParams, search_path: Path, cwd) -> ToolResult:
         args = self._build_args(params, search_path)
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -145,7 +235,6 @@ class GrepTool(Tool):
         except Exception as e:
             return ToolResult.error_result(f"ripgrep failed: {e}")
 
-        # rg exit codes: 0 = matches, 1 = no matches, 2 = error.
         if proc.returncode == 2:
             return ToolResult.error_result(
                 f"ripgrep error: {stderr.decode('utf-8', 'replace').strip()[:200]}"
@@ -153,35 +242,25 @@ class GrepTool(Tool):
 
         out = stdout.decode("utf-8", "replace")
         lines = out.splitlines()
-
-        if not lines:
-            return ToolResult.success_result(
-                f"No matches found for pattern '{params.pattern}'",
-                metadata={"matches": 0, "mode": params.output_mode},
-            )
-
-        # head_limit + offset post-processing (CC: "| tail -n +offset | head -N")
         total = len(lines)
-        if params.offset:
-            lines = lines[params.offset:]
-        truncated = False
-        if params.head_limit is not None and len(lines) > params.head_limit:
-            lines = lines[: params.head_limit]
-            truncated = True
 
-        body = "\n".join(lines)
-        if truncated:
-            body += f"\n... [results truncated to {params.head_limit}]"
+        if params.output_mode == "files_with_matches":
+            lines = _sort_by_mtime(lines)
+
+        lines, applied = _apply_head_limit(lines, params.head_limit, params.offset)
+
+        lines = [_relativize_line(ln, params.output_mode, cwd) for ln in lines]
+
+        body = _render_grep_output(params.output_mode, lines, applied, params.offset)
 
         return ToolResult.success_result(
             body,
-            truncated=truncated,
+            truncated=applied is not None,
             metadata={"mode": params.output_mode, "lines": total},
         )
 
-    # ── Python fallback (no rg) ───────────────────────────────────────
 
-    def _run_python_fallback(self, params: GrepParams, search_path: Path) -> ToolResult:
+    def _run_python_fallback(self, params: GrepParams, search_path: Path, cwd) -> ToolResult:
         try:
             flags = re.IGNORECASE if params.case_insensitive else 0
             if params.multiline:
@@ -212,46 +291,35 @@ class GrepTool(Tool):
             if not file_hits:
                 continue
             total_matches += file_hits
-            rel = str(fp)
 
             if mode == "files_with_matches":
-                matched_files.append(rel)
+                matched_files.append(str(fp))
             elif mode == "count":
+                rel = display_path_rel_to_cwd(str(fp), cwd)
                 out_lines.append(f"{rel}:{file_hits}")
-            else:  # content
+            else:
+                rel = display_path_rel_to_cwd(str(fp), cwd)
                 out_lines.append(f"=== {rel} ===")
                 for i, ln in enumerate(content.splitlines(), start=1):
                     if pattern.search(ln):
                         out_lines.append(f"{i}:{ln}" if params.show_line_numbers else ln)
 
         if mode == "files_with_matches":
-            out_lines = matched_files
+            out_lines = [
+                display_path_rel_to_cwd(p, cwd) for p in _sort_by_mtime(matched_files)
+            ]
 
-        if not out_lines:
-            return ToolResult.success_result(
-                f"No matches found for pattern '{params.pattern}'",
-                metadata={"matches": 0, "mode": mode},
-            )
-
-        if params.offset:
-            out_lines = out_lines[params.offset:]
-        truncated = False
-        if params.head_limit is not None and len(out_lines) > params.head_limit:
-            out_lines = out_lines[: params.head_limit]
-            truncated = True
-
-        body = "\n".join(out_lines)
-        if truncated:
-            body += f"\n... [results truncated to {params.head_limit}]"
+        out_lines, applied = _apply_head_limit(out_lines, params.head_limit, params.offset)
+        body = _render_grep_output(mode, out_lines, applied, params.offset)
         return ToolResult.success_result(
-            body, truncated=truncated,
+            body, truncated=applied is not None,
             metadata={"mode": mode, "matches": total_matches},
         )
 
     def _find_files(self, search_path: Path) -> list[Path]:
         files: list[Path] = []
         for root, dirs, filenames in os.walk(search_path):
-            dirs[:] = [d for d in dirs if d not in {"node_modules", "__pycache__", ".git", ".venv", "venv", ".hg", ".svn"}]
+            dirs[:] = [d for d in dirs if d not in {"node_modules", "__pycache__", ".venv", "venv", *_VCS_DIRECTORIES_TO_EXCLUDE}]
             for filename in filenames:
                 if filename.startswith("."):
                     continue
@@ -267,7 +335,6 @@ def _glob_match(path: Path, glob_spec: str) -> bool:
     """Match a file against a (possibly multi-pattern) glob spec, fallback only."""
     import fnmatch
     for raw in glob_spec.split():
-        # crude brace expansion: *.{ts,tsx} → *.ts, *.tsx
         if "{" in raw and "}" in raw:
             pre, rest = raw.split("{", 1)
             inner, post = rest.split("}", 1)

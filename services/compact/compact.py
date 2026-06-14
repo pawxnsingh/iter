@@ -1,8 +1,6 @@
 """
 Compact: The actual LLM call that summarizes a conversation.
 
-Source: src/services/compact/compact.ts
-
 This function takes the full conversation, sends it to the LLM with
 the compaction prompt, and returns the summary text.
 """
@@ -17,6 +15,10 @@ from client.llm_client import LLMClient
 from client.response import StreamEventType
 from services.compact.prompt import get_compact_prompt
 
+SUMMARIZER_SYSTEM_PROMPT = (
+    "You are a helpful AI assistant tasked with summarizing conversations."
+)
+
 
 async def compact_conversation(
     messages: list,
@@ -29,32 +31,29 @@ async def compact_conversation(
     Call the LLM to summarize the conversation.
 
     This is the expensive compaction operation — it makes an actual API call.
-    Claude Code: compactConversation() in compact.ts line 387.
 
-    The flow:
-    1. Format messages into a readable conversation transcript
-    2. Send to LLM with the compaction prompt (9-section summary request)
-    3. Return the raw summary text (caller handles formatting)
+    sends the REAL structured conversation to the summarizer, NOT a flattened
+    text transcript:
+      - systemPrompt: a short fixed string (SUMMARIZER_SYSTEM_PROMPT).
+      - messages: the actual prior messages (full content, real roles/tool
+        blocks), with images stripped, followed by the 9-section compact prompt
+        as the trailing USER message (summaryRequest).
 
     custom_instructions, when present, are folded into the compaction prompt.
-    They originate from a PreCompact hook (CC: executePreCompactHooks).
+    They originate from a PreCompact hook.
     """
     compact_prompt = get_compact_prompt(custom_instructions)
 
-    # Build the conversation transcript for the model to summarize
-    conversation_text = _format_conversation_for_compact(messages)
-
-    # Build the compact request messages
     compact_messages = [
-        {"role": "system", "content": compact_prompt},
-        {"role": "user", "content": f"Here is the conversation to summarize:\n\n{conversation_text}"},
+        {"role": "system", "content": SUMMARIZER_SYSTEM_PROMPT},
+        *(_to_text_only_dict(msg) for msg in messages),
+        {"role": "user", "content": compact_prompt},
     ]
 
-    # Call LLM (non-streaming for compaction — we need the full response)
     summary_parts = []
     async for event in client.chat_completion(
         messages=compact_messages,
-        tools=None,  # No tools during compaction
+        tools=None,
         stream=True,
     ):
         if event.type == StreamEventType.TEXT_DELTA and event.text_delta:
@@ -69,35 +68,17 @@ async def compact_conversation(
     return summary
 
 
-def _format_conversation_for_compact(messages: list) -> str:
-    """
-    Format messages into a readable transcript for the compaction model.
-
-    Each message becomes a labeled section so the summarizer can
-    distinguish user requests from tool outputs from assistant responses.
-    """
-    parts = []
-    for msg in messages:
-        role_label = msg.role.upper()
-        content = msg.content
-
-        # Truncate very long tool results in the transcript too
-        # (they're the reason we're compacting in the first place)
-        if msg.role == "tool" and len(content) > 5000:
-            content = content[:5000] + "\n... [truncated for compaction]"
-
-        if msg.tool_call_id:
-            parts.append(f"[{role_label} (tool_call_id: {msg.tool_call_id})]:\n{content}")
-        elif msg.tool_calls:
-            tool_names = []
-            for tc in msg.tool_calls:
-                func = tc.get("function", {})
-                tool_names.append(func.get("name", "unknown"))
-            parts.append(f"[{role_label} -> called tools: {', '.join(tool_names)}]:\n{content}")
-        else:
-            parts.append(f"[{role_label}]:\n{content}")
-
-    return "\n\n---\n\n".join(parts)
+def _to_text_only_dict(msg) -> dict:
+    """Convert a MessageItem to its API dict, stripping image blocks (
+    stripImagesFromMessages) so we don't ship base64 to the summarizer. Keeps
+    real roles + tool_call/tool_result structure for high-fidelity summaries."""
+    out: dict = {"role": msg.role}
+    if msg.tool_call_id:
+        out["tool_call_id"] = msg.tool_call_id
+    if msg.tool_calls:
+        out["tool_calls"] = msg.tool_calls
+    out["content"] = msg.content or ""
+    return out
 
 
 def create_compact_fn(client: LLMClient, model: str):
@@ -108,7 +89,7 @@ def create_compact_fn(client: LLMClient, model: str):
     about the LLM client directly. This factory creates the function
     that the agent injects into the context manager.
 
-    This is the same dependency injection pattern Claude Code uses
+    This is the same dependency injection pattern uses
     with QueryDeps.
     """
     async def compact_fn(messages: list, system_prompt: str, custom_instructions: str | None = None) -> str:

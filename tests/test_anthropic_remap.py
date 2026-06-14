@@ -29,7 +29,6 @@ def test_tool_calls_become_tool_use_blocks():
     assert tool_uses[0]["input"] == {"file_path": "/a"}
     assert tool_uses[0]["id"] == "c1" and tool_uses[0]["name"] == "Read"
 
-    # both tool results merged into a single user message
     tr = out[2]
     assert tr["role"] == "user"
     results = tr["content"]

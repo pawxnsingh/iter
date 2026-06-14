@@ -69,7 +69,6 @@ class SlashComplete(VerticalGroup):
     def on_mount(self) -> None:
         self._refresh_options("")
 
-    # ─── Show / hide ──────────────────────────────────────────────────
 
     def open(self, prefill: str = "") -> None:
         """Reveal the overlay; focus the input; optionally prefill the filter."""
@@ -83,24 +82,20 @@ class SlashComplete(VerticalGroup):
         self._set_visible(False)
 
     def _set_visible(self, visible: bool) -> None:
-        # Prompt owns the CSS class that gates our `display`
         self.parent_prompt_set_class("-show-slash-complete", visible)
 
     def parent_prompt_set_class(self, cls: str, on: bool) -> None:
-        # Walk up to the owning Prompt widget and toggle the class
         node = self.parent
         while node is not None and not node.__class__.__name__ == "Prompt":
             node = node.parent
         if node is not None:
             node.set_class(on, cls)
 
-    # ─── Filtering ────────────────────────────────────────────────────
 
     def _refresh_options(self, query: str) -> None:
         q = query.lstrip("/").lower()
         options: list[Option] = []
 
-        # Score: exact prefix wins, then substring, then alphabetical fallback.
         def score(name: str) -> tuple[int, str]:
             name_l = name.lower()
             if q == "":
@@ -132,7 +127,6 @@ class SlashComplete(VerticalGroup):
         if options:
             lst.highlighted = 0
 
-    # ─── Key / event routing ──────────────────────────────────────────
 
     @on(Input.Changed, "#slash-input")
     def _on_filter_changed(self, event: Input.Changed) -> None:
@@ -161,8 +155,6 @@ class SlashComplete(VerticalGroup):
         self.post_message(Dismiss())
 
     def on_key(self, event: events.Key) -> None:
-        # Forward down/up from the Input to the OptionList so the user can
-        # type + arrow without losing focus.
         if event.key in ("down", "up", "pagedown", "pageup"):
             lst = self.query_one("#slash-options", OptionList)
             if event.key == "down":

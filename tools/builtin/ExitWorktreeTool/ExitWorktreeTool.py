@@ -1,7 +1,7 @@
 """
 ExitWorktree tool — exit a session-owned worktree.
 
-Source: Claude Code src/tools/ExitWorktreeTool/
+Source: src/tools/ExitWorktreeTool/
 
 Operates only on worktrees created by EnterWorktree in the current session
 (tracked in .ai-agent/worktree_session.json). Refuses to remove a worktree
@@ -52,8 +52,6 @@ class ExitWorktreeTool(Tool):
         params = ExitWorktreeParams(**invocation.params)
         cwd = invocation.cwd
 
-        # Find session state. Look in cwd first (called from worktree), then
-        # walk up. Simplest: try cwd, then parents up to filesystem root.
         session = None
         search = cwd
         while True:
@@ -74,19 +72,16 @@ class ExitWorktreeTool(Tool):
         repo_root = session["repo_root"]
 
         if params.action == "remove":
-            # Check for uncommitted changes
             code, status_out, _ = await _run_git(
                 ["-C", worktree_path, "status", "--porcelain"],
                 state_root,
             )
             uncommitted = [line for line in status_out.splitlines() if line.strip()]
 
-            # Check for commits not on the original branch
             code2, rev_out, _ = await _run_git(
                 ["-C", worktree_path, "rev-list", "--count", f"HEAD ^{repo_root}"],
                 state_root,
             )
-            # If git fails on rev-list (no upstream comparison possible), assume 0
             commits_ahead = 0
             try:
                 commits_ahead = int(rev_out.strip().split()[0])
@@ -102,7 +97,6 @@ class ExitWorktreeTool(Tool):
                 msg += "\nRe-invoke with discard_changes=true to force."
                 return ToolResult.error_result(msg)
 
-            # Remove the worktree
             code, _, err = await _run_git(
                 ["worktree", "remove", "--force", worktree_path],
                 repo_root,
@@ -110,7 +104,6 @@ class ExitWorktreeTool(Tool):
             if code != 0:
                 return ToolResult.error_result(f"git worktree remove failed: {err.strip()}")
 
-            # Delete the branch
             await _run_git(["branch", "-D", branch], repo_root)
 
             clear_worktree_state(state_root)
@@ -125,7 +118,6 @@ class ExitWorktreeTool(Tool):
                 },
             )
 
-        # action == "keep"
         clear_worktree_state(state_root)
         return ToolResult.success_result(
             f"Left worktree {worktree_path} (branch {branch}) intact on disk. "

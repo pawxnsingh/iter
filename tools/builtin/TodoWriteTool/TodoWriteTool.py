@@ -1,7 +1,7 @@
 """
-TodoWrite tool — structured task management matching Claude Code.
+TodoWrite tool — structured task management matching.
 
-Source: Claude Code src/tools/TodoWriteTool/
+Source: src/tools/TodoWriteTool/
 
 Task states: pending → in_progress → completed
 The model submits the FULL todo list each time (replace, not patch).
@@ -52,7 +52,6 @@ class TodoWriteTool(Tool):
             for t in params.todos
         ]
 
-        # Build summary
         pending = sum(1 for t in self._todos if t["status"] == "pending")
         in_progress = sum(1 for t in self._todos if t["status"] == "in_progress")
         completed = sum(1 for t in self._todos if t["status"] == "completed")

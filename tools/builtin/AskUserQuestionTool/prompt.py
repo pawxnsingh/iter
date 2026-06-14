@@ -1,6 +1,5 @@
 """
-AskUserQuestionTool prompt — verbatim from Claude Code
-src/tools/AskUserQuestionTool/prompt.ts (ASK_USER_QUESTION_TOOL_PROMPT +
+AskUserQuestionTool prompt.
 PREVIEW_FEATURE_PROMPT). ${EXIT_PLAN_MODE_TOOL_NAME} substituted with
 our "ExitPlanMode".
 """
@@ -14,7 +13,6 @@ DESCRIPTION = (
     "clarify ambiguity, understand preferences, make decisions or offer them choices."
 )
 
-# Verbatim from CC's PREVIEW_FEATURE_PROMPT.markdown
 PREVIEW_FEATURE_PROMPT_MARKDOWN = """
 Preview feature:
 Use the optional `preview` field on options when presenting concrete artifacts that users need to visually compare:
@@ -26,7 +24,6 @@ Use the optional `preview` field on options when presenting concrete artifacts t
 Preview content is rendered as markdown in a monospace box. Multi-line text with newlines is supported. When any option has a preview, the UI switches to a side-by-side layout with a vertical option list on the left and preview on the right. Do not use previews for simple preference questions where labels and descriptions suffice. Note: previews are only supported for single-select questions (not multiSelect).
 """
 
-# Verbatim from CC's PREVIEW_FEATURE_PROMPT.html
 PREVIEW_FEATURE_PROMPT_HTML = """
 Preview feature:
 Use the optional `preview` field on options when presenting concrete artifacts that users need to visually compare:

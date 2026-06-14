@@ -1,7 +1,7 @@
 """
 Config tool — get/set configuration from within the agent.
 
-Source: Claude Code src/tools/ConfigTool/
+Source: src/tools/ConfigTool/
 
 Allows the model to read and modify settings at runtime.
 Supports: model, temperature, permission mode, max turns, etc.
@@ -52,14 +52,12 @@ class ConfigTool(Tool):
                 f"Available: {', '.join(CONFIGURABLE_SETTINGS.keys())}"
             )
 
-        # GET
         if params.value is None:
             value = self._get_setting(params.setting)
             return ToolResult.success_result(
                 f"{params.setting} = {value}"
             )
 
-        # SET
         try:
             self._set_setting(params.setting, params.value)
             return ToolResult.success_result(

@@ -1,15 +1,14 @@
 """
-Bash tool prompt — verbatim from Claude Code src/tools/BashTool/prompt.ts
-getSimplePrompt() output, rendered for our config:
-  - No sandbox (no SandboxManager section)
-  - No MONITOR_TOOL feature
-  - No background tasks (no `run_in_background` parameter yet)
-  - Glob/Grep tools present (not embedded bfs/ugrep)
-  - External-user git instructions (not USER_TYPE=='ant')
-  - Default timeout 120s, max 600s
+Bash tool prompt, rendered for this configuration:
+  - no sandbox section
+  - no background tasks (`run_in_background` not implemented yet)
+  - Glob/Grep available as dedicated tools
+  - default timeout 120s, max 600s
 """
 
-BASH_PROMPT = """The working directory persists between commands, but shell state does not. The shell environment is initialized from the user's profile (bash or zsh).
+BASH_PROMPT = """Executes a given bash command and returns its output.
+
+The working directory persists between commands, but shell state does not. The shell environment is initialized from the user's profile (bash or zsh).
 
 IMPORTANT: Avoid using this tool to run `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed or after you have verified that a dedicated tool cannot accomplish your task. Instead, use the appropriate dedicated tool as this will provide a much better experience for the user:
 

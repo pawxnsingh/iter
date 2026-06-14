@@ -1,6 +1,6 @@
-"""Read-before-write + freshness enforcement (Claude Code readFileState parity).
+"""Read-before-write + freshness enforcement.
 
-CC FileEdit/FileWrite validateInput errorCode 6 (not read) and 7 (stale).
+FileEdit/FileWrite validateInput errorCode 6 (not read) and 7 (stale).
 """
 import asyncio
 import tempfile
@@ -86,15 +86,12 @@ def test_write_new_file_needs_no_read_but_overwrite_unread_blocks():
     clear()
     with tempfile.TemporaryDirectory() as t:
         cwd = Path(t)
-        # new file: allowed
         r_new = _run(FileWriteTool(_cfg(cwd)).execute(ToolInvocation(
             params={"file_path": str(cwd / "w.txt"), "content": "v1\n"}, cwd=cwd)))
         assert r_new.success
-        # overwrite our own just-written file: state is fresh → allowed
         r_over = _run(FileWriteTool(_cfg(cwd)).execute(ToolInvocation(
             params={"file_path": str(cwd / "w.txt"), "content": "v2\n"}, cwd=cwd)))
         assert r_over.success
-        # overwrite a different existing file never read → blocked
         other = cwd / "o.txt"; other.write_text("x\n")
         r_block = _run(FileWriteTool(_cfg(cwd)).execute(ToolInvocation(
             params={"file_path": str(other), "content": "y\n"}, cwd=cwd)))
@@ -109,7 +106,6 @@ def test_limited_read_covering_whole_file_allows_edit():
     clear()
     with tempfile.TemporaryDirectory() as t:
         cwd = Path(t); f = cwd / "config.py"; f.write_text("DEBUG = False\nTIMEOUT = 30\n")
-        # 2-line file read with limit=50 → full coverage
         _run(FileReadTool(_cfg(cwd)).execute(ToolInvocation(
             params={"file_path": str(f), "offset": 1, "limit": 50}, cwd=cwd)))
         r = _run(FileEditTool(_cfg(cwd)).execute(ToolInvocation(
@@ -118,16 +114,18 @@ def test_limited_read_covering_whole_file_allows_edit():
         assert f.read_text() == "DEBUG = True\nTIMEOUT = 30\n"
 
 
-def test_genuinely_partial_read_still_blocks_edit():
-    """A read that stops short of EOF is a partial view → edit still blocked."""
+def test_partial_read_satisfies_read_before_write():
+    """parity: a partial Read (offset/limit) DOES satisfy read-before-write.
+    1032); that flag is reserved for injected memory content. So editing a
+    string that lies outside the read window is allowed — the edit still has to
+    match the real file content."""
     clear()
     with tempfile.TemporaryDirectory() as t:
         cwd = Path(t); f = cwd / "big.py"
         f.write_text("\n".join(f"line{i}" for i in range(1, 101)) + "\n")
-        # read only first 10 lines of a 100-line file → partial
         _run(FileReadTool(_cfg(cwd)).execute(ToolInvocation(
             params={"file_path": str(f), "offset": 1, "limit": 10}, cwd=cwd)))
         r = _run(FileEditTool(_cfg(cwd)).execute(ToolInvocation(
             params={"file_path": str(f), "old_string": "line50", "new_string": "L50"}, cwd=cwd)))
-        assert not r.success
-        assert "has not been read" in (r.error or "")
+        assert r.success
+        assert "L50" in f.read_text()

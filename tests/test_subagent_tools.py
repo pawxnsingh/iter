@@ -36,6 +36,5 @@ def test_plan_excludes_write_tools():
 
 
 def test_general_purpose_has_all_tools():
-    # general-purpose declares tools=["*"] → no restriction
     names = _subagent_registry_names("general-purpose")
     assert "Edit" in names and "Write" in names and "Read" in names

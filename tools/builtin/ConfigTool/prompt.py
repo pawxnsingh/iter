@@ -1,10 +1,9 @@
 """
-ConfigTool prompt — derived from Claude Code src/tools/ConfigTool/prompt.ts.
-The CC prompt is generated dynamically from a SUPPORTED_SETTINGS registry +
+The prompt is generated dynamically from a SUPPORTED_SETTINGS registry +
 model options. We render a static equivalent matching the canonical shape.
 """
 
-DESCRIPTION = "Get or set Claude Code configuration settings."
+DESCRIPTION = "Get or set configuration settings."
 
 CONFIG_TOOL_PROMPT = """View or change configuration settings. Use when the user requests configuration changes, asks about current settings, or when adjusting a setting would benefit them.
 

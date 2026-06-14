@@ -1,5 +1,4 @@
 """
-Compaction prompt — verbatim port of Claude Code's services/compact/prompt.ts.
 
 Three variants:
   - getCompactPrompt(): full conversation summary
@@ -22,9 +21,6 @@ from typing import Literal
 PartialCompactDirection = Literal["from", "up_to"]
 
 
-# Verbatim from CC. Placed FIRST so adaptive-thinking models on Sonnet 4.6+
-# don't attempt a tool call on the only turn (CC: 2.79% failure on 4.6 vs
-# 0.01% on 4.5 without the explicit rejection-consequences framing).
 NO_TOOLS_PREAMBLE = """CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.
 
 - Do NOT use Read, Bash, Grep, Glob, Edit, Write, or ANY other tool.
@@ -41,7 +37,6 @@ NO_TOOLS_TRAILER = (
 )
 
 
-# Scoped to "the conversation" (whole-history compact).
 DETAILED_ANALYSIS_INSTRUCTION_BASE = """Before providing your final summary, wrap your analysis in <analysis> tags to organize your thoughts and ensure you've covered all necessary points. In your analysis process:
 
 1. Chronologically analyze each message and section of the conversation. For each section thoroughly identify:
@@ -57,7 +52,6 @@ DETAILED_ANALYSIS_INSTRUCTION_BASE = """Before providing your final summary, wra
    - Pay special attention to specific user feedback that you received, especially if the user told you to do something differently.
 2. Double-check for technical accuracy and completeness, addressing each required element thoroughly."""
 
-# Scoped to "the recent messages" (partial compact, 'from' direction).
 DETAILED_ANALYSIS_INSTRUCTION_PARTIAL = """Before providing your final summary, wrap your analysis in <analysis> tags to organize your thoughts and ensure you've covered all necessary points. In your analysis process:
 
 1. Analyze the recent messages chronologically. For each section thoroughly identify:
@@ -221,8 +215,6 @@ Please provide your summary based on the RECENT messages only (after the retaine
 """
 
 
-# 'up_to' direction: summary precedes kept-recent messages in the continuing
-# session. Last section is "Context for Continuing Work" instead of Next Step.
 PARTIAL_COMPACT_UP_TO_PROMPT = f"""Your task is to create a detailed summary of this conversation. This summary will be placed at the start of a continuing session; newer messages that build on this context will follow after your summary (you do not see them here). Summarize thoroughly so that someone reading only your summary and then the newer messages can fully understand what happened and continue the work.
 
 {DETAILED_ANALYSIS_INSTRUCTION_BASE}
@@ -286,7 +278,7 @@ Please provide your summary following this structure, ensuring precision and tho
 
 
 def get_compact_prompt(custom_instructions: str | None = None) -> str:
-    """Build the full-conversation compaction prompt. Mirrors CC's getCompactPrompt()."""
+    """Build the full-conversation compaction prompt. Mirrors the getCompactPrompt."""
     prompt = NO_TOOLS_PREAMBLE + BASE_COMPACT_PROMPT
     if custom_instructions and custom_instructions.strip():
         prompt += f"\n\nAdditional Instructions:\n{custom_instructions}"
@@ -294,16 +286,11 @@ def get_compact_prompt(custom_instructions: str | None = None) -> str:
     return prompt
 
 
-# Partial (directional) compaction — CC parity. In Claude Code this is invoked
-# only from the REPL screen (screens/REPL.tsx) for user-driven partial compaction
-# at a chosen message index; it is NOT part of the autonomous agent loop. Kept as
-# a parity-faithful building block, exercised by tests, for when a REPL-style
-# manual-compaction entry point is added. Not agentic-layer dead code.
 def get_partial_compact_prompt(
     custom_instructions: str | None = None,
     direction: PartialCompactDirection = "from",
 ) -> str:
-    """Build the partial compaction prompt. Mirrors CC's getPartialCompactPrompt()."""
+    """Build the partial compaction prompt. Mirrors the getPartialCompactPrompt."""
     template = (
         PARTIAL_COMPACT_UP_TO_PROMPT
         if direction == "up_to"
@@ -319,9 +306,8 @@ def get_partial_compact_prompt(
 def format_compact_summary(summary: str) -> str:
     """
     Strip <analysis> scratchpad and replace <summary>…</summary> with a
-    `Summary:\\n…` header. Mirrors CC's formatCompactSummary().
+    `Summary:\\n…` header. Mirrors the formatCompactSummary.
     """
-    # Strip analysis section — drafting scratchpad, no informational value.
     formatted = re.sub(r"<analysis>[\s\S]*?</analysis>", "", summary)
 
     summary_match = re.search(r"<summary>([\s\S]*?)</summary>", formatted)
@@ -333,7 +319,6 @@ def format_compact_summary(summary: str) -> str:
             formatted,
         )
 
-    # Collapse runs of blank lines.
     formatted = re.sub(r"\n\n+", "\n\n", formatted)
     return formatted.strip()
 
@@ -344,10 +329,7 @@ def get_compact_user_summary_message(
     transcript_path: str | None = None,
     recent_messages_preserved: bool = False,
 ) -> str:
-    """
-    Wrap a formatted summary as the user-side resume message. Mirrors CC's
-    getCompactUserSummaryMessage().
-    """
+    """Wrap a formatted summary as the user-side resume message."""
     formatted_summary = format_compact_summary(summary)
     base = (
         "This session is being continued from a previous conversation that "

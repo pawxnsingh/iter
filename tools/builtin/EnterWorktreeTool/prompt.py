@@ -1,6 +1,5 @@
 """
-EnterWorktreeTool prompt — verbatim from Claude Code
-src/tools/EnterWorktreeTool/prompt.ts.
+EnterWorktreeTool prompt.
 """
 
 ENTER_WORKTREE_TOOL_PROMPT = """Use this tool ONLY when the user explicitly asks to work in a worktree. This tool creates an isolated git worktree and switches the current session into it.

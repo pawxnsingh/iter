@@ -20,7 +20,7 @@ def test_compact_user_summary_message_with_transcript_and_preserved():
         transcript_path="/tmp/t.jsonl", recent_messages_preserved=True)
     assert "/tmp/t.jsonl" in msg
     assert "preserved verbatim" in msg
-    assert "Continue the conversation" not in msg  # suppress=False
+    assert "Continue the conversation" not in msg
 
 
 def test_partial_compact_prompt_directions():
@@ -28,7 +28,6 @@ def test_partial_compact_prompt_directions():
     upto = get_partial_compact_prompt(direction="up_to")
     assert "RECENT portion" in frm
     assert "continuing session" in upto
-    # both carry the no-tools guardrails
     for p in (frm, upto):
         assert "Do NOT call any tools" in p or "TEXT ONLY" in p
 

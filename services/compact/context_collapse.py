@@ -1,7 +1,7 @@
 """
 Context collapse: Hierarchical archival of old messages.
 
-Source: Claude Code src/services/contextCollapse/ (CONTEXT_COLLAPSE feature)
+Source: src/services/contextCollapse/ (CONTEXT_COLLAPSE feature)
 
 More granular than full summarization. Instead of replacing ALL old messages
 with one summary, context collapse archives individual conversation segments
@@ -29,7 +29,6 @@ from utils.text import estimate_token
 
 logger = logging.getLogger(__name__)
 
-# Target: collapse until we're at 90% of threshold
 COLLAPSE_TARGET_RATIO = 0.90
 
 
@@ -49,16 +48,14 @@ def apply_context_collapse(
     target = int(threshold * COLLAPSE_TARGET_RATIO)
 
     if current_tokens < target:
-        return messages  # Under target, no collapse needed
+        return messages
 
     logger.info(f"Context collapse: {current_tokens} tokens > {target} target")
 
-    # Phase 1: Collapse old tool results to one-line summaries
     messages = _collapse_tool_results(messages, target, model)
     if estimate_messages_tokens(messages, model) < target:
         return messages
 
-    # Phase 2: Collapse old assistant messages to brief summaries
     messages = _collapse_assistant_messages(messages, target, model)
 
     return messages
@@ -77,13 +74,11 @@ def _collapse_tool_results(
     if len(messages) < 6:
         return messages
 
-    # Find boundary — keep last 8 messages intact
     boundary = max(0, len(messages) - 8)
     result = []
 
     for i, msg in enumerate(messages):
         if i < boundary and msg.role == "tool" and len(msg.content) > 200:
-            # Collapse to one-line summary
             first_line = msg.content.split("\n")[0][:100]
             collapsed_content = f"[Tool result collapsed: {first_line}...]"
             result.append(MessageItem(
@@ -121,7 +116,6 @@ def _collapse_assistant_messages(
 
     for i, msg in enumerate(messages):
         if i < boundary and msg.role == "assistant" and len(msg.content) > 500:
-            # Keep first 200 chars
             summary = msg.content[:200].rsplit(".", 1)[0] + "."
             collapsed = f"[Earlier response collapsed] {summary}"
             result.append(MessageItem(

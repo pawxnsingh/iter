@@ -1,6 +1,5 @@
 """
-ExitPlanModeTool prompt — verbatim from Claude Code
-src/tools/ExitPlanModeTool/prompt.ts (EXIT_PLAN_MODE_V2_TOOL_PROMPT).
+ExitPlanModeTool prompt.
 """
 
 EXIT_PLAN_MODE_TOOL_PROMPT = """Use this tool when you are in plan mode and have finished writing your plan to the plan file and are ready for user approval.

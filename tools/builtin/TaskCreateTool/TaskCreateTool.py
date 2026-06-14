@@ -1,7 +1,7 @@
 """
 TaskCreate tool — create a new tracked task.
 
-Source: Claude Code src/tools/TaskCreateTool/
+Source: src/tools/TaskCreateTool/
 """
 
 from __future__ import annotations
@@ -36,7 +36,6 @@ class TaskCreateTool(Tool):
         task = Task(id=task_id, subject=params.subject, description=params.description)
         all_tasks()[task_id] = task
 
-        # TaskCreated hook (CC: a blocking hook rolls back the create).
         blocking = await fire_task_created(task)
         if blocking:
             del all_tasks()[task_id]

@@ -45,11 +45,16 @@ def test_memory_included():
     assert "user prefers dark mode" in prompt
 
 
-def test_developer_instructions_included():
+def test_developer_instructions_not_baked_into_system_prompt():
+    """Project/user instructions (AGENT.md) are delivered via the turn-1
+    <system-reminder> agentMd user message, NOT baked into the system prompt —
+    so the system prompt stays prompt-cache-stable."""
     c = Config(developer_instructions="Always use TypeScript")
     prompt = get_system_prompt(c, None, None)
-    assert "Always use TypeScript" in prompt
-    assert "Project Instructions" in prompt
+    assert "Always use TypeScript" not in prompt
+    assert "Project Instructions" not in prompt
+    assert "You are powered by the model" in prompt
+    assert "Current date" not in prompt
 
 
 def test_no_emojis_instruction():

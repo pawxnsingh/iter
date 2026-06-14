@@ -1,8 +1,6 @@
 """
-EnterPlanModeTool prompt — verbatim external version from Claude Code
-src/tools/EnterPlanModeTool/prompt.ts (getEnterPlanModeToolPromptExternal,
-with the "What Happens" section included since we don't have the
-interview-phase attachment).
+EnterPlanMode tool prompt, with the "What Happens" section included (there is
+no interview-phase attachment here).
 """
 
 ENTER_PLAN_MODE_TOOL_PROMPT = """Use this tool proactively when you're about to start a non-trivial implementation task. Getting user sign-off on your approach before writing code prevents wasted effort and ensures alignment. This tool transitions you into plan mode where you can explore the codebase and design an implementation approach for user approval.

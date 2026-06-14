@@ -6,7 +6,6 @@ get_messages_with_compaction() before every API call, which runs the full
 compaction pipeline (microcompact → collapse → autocompact → tool-result
 budget) and returns the API message list.
 
-Claude Code equivalent: The message management spread across query.ts
 (compaction orchestration) and the REPL's message array.
 """
 
@@ -29,6 +28,35 @@ from utils.text import count_tokens
 
 logger = logging.getLogger(__name__)
 
+_SYNTHETIC_TOOL_RESULT_PLACEHOLDER = "[Tool result missing due to internal error]"
+
+
+def _ensure_tool_result_pairing(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """ensureToolResultPairing: every assistant tool_call
+    must be followed by a matching tool result before the request is sent. Any
+    tool_call id with no tool message anywhere gets a synthetic error result
+    injected right after its assistant message — so an interrupted/mid-turn state
+    never sends an orphan tool_call (which the API rejects with a 400)."""
+    answered = {
+        m.get("tool_call_id")
+        for m in messages
+        if m.get("role") == "tool" and m.get("tool_call_id")
+    }
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        out.append(m)
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            for tc in m["tool_calls"]:
+                tcid = tc.get("id")
+                if tcid and tcid not in answered:
+                    out.append({
+                        "role": "tool",
+                        "tool_call_id": tcid,
+                        "content": _SYNTHETIC_TOOL_RESULT_PLACEHOLDER,
+                    })
+                    answered.add(tcid)
+    return out
+
 
 @dataclass
 class MessageItem:
@@ -38,9 +66,6 @@ class MessageItem:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     token_count: int | None = None
     turn_number: int = 0
-    # Image attachments (base64) for multimodal user messages. Each entry:
-    # {"media_type": str, "data": base64-str}. When present, to_dict() emits
-    # OpenAI-style multimodal content (text + image_url blocks).
     images: list[dict[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -53,8 +78,6 @@ class MessageItem:
             result["tool_calls"] = self.tool_calls
 
         if self.images:
-            # Multimodal content: text part (if any) + image_url blocks. The
-            # Anthropic provider path remaps image_url → image blocks.
             parts: list[dict[str, Any]] = []
             if self.content:
                 parts.append({"type": "text", "text": self.content})
@@ -78,22 +101,43 @@ class ContextManager:
         config: Config,
         user_memory: str | None,
         tools: list[Tool] | None,
+        mcp_instructions: list[tuple[str, str]] | None = None,
     ) -> None:
-        self._system_prompt = get_system_prompt(config, user_memory, tools)
+        self._system_prompt = get_system_prompt(config, user_memory, tools, mcp_instructions)
         self.config = config
         self._messages: list[MessageItem] = []
         self._model_name = self.config.model_name
         self._turn_number = 0
 
-        # Compaction state (Claude Code: AutoCompactTrackingState)
         self._compact_tracking: AutoCompactTracking | None = None
 
-        # Compact function — injected by the agent so we don't import LLM here
         self._compact_fn: Callable[[list[MessageItem], str], Awaitable[str]] | None = None
+        self._summary_sink: Callable[[str], None] | None = None
+        self._transcript_path: str | None = None
+        self._user_context_reminder: str | None = None
+        self._system_context_suffix: str | None = None
+
+    def set_user_context_reminder(self, text: str | None) -> None:
+        """Set the turn-1 <system-reminder> user-context message, prepended at
+        build time."""
+        self._user_context_reminder = text or None
+
+    def set_system_context_suffix(self, text: str | None) -> None:
+        """Set the gitStatus suffix appended to the system prompt (
+        appendSystemContext)."""
+        self._system_context_suffix = text or None
 
     def set_compact_fn(self, fn: Callable[[list[MessageItem], str], Awaitable[str]]) -> None:
         """Inject the compact function (calls LLM to summarize)."""
         self._compact_fn = fn
+
+    def set_summary_sink(self, fn: Callable[[str], None]) -> None:
+        """Inject a callback to persist a compaction summary to the transcript."""
+        self._summary_sink = fn
+
+    def set_transcript_path(self, path: str | None) -> None:
+        """Transcript path for the post-compact summary's read-back hint."""
+        self._transcript_path = path or None
 
     @property
     def message_count(self) -> int:
@@ -133,7 +177,7 @@ class ContextManager:
 
         OpenAI/Azure accept image blocks only in user messages (not tool
         messages), so after a tool returns an image we surface it as a follow-up
-        user message. Mirrors CC's image tool_result, adapted to the OpenAI
+        user message. Mirrors the image tool_result, adapted to the OpenAI
         message shape our provider uses.
         """
         item = MessageItem(
@@ -177,40 +221,43 @@ class ContextManager:
         """
         Run the compaction pipeline and return the API message list.
 
-        Phase order matches Claude Code (query.ts ~396-468):
+        Phase order matches
 
-          1. snip                  — lossless removal of oldest message groups
-          2. microcompact          — clear stale tool results (zero cost)
+          1. apply_tool_result_budget — cap tool result bytes FIRST, so every
+                                     downstream token count reflects the budgeted
+                                     sizes. Running
+                                     it last would let autocompact fire an
+                                     expensive LLM summary on inflated counts that
+                                     the budget pass would have made unnecessary.
+          2. snip                  — lossless removal of oldest message groups
           3. context_collapse      — merge adjacent same-role + collapse old
                                      tool calls. Runs BEFORE autocompact so
                                      that if collapse frees enough, autocompact
                                      becomes a no-op and we keep granular
                                      context instead of a lossy summary.
           4. autocompact           — LLM summarisation if still over threshold.
-          5. apply_tool_result_budget — cap aggregate tool result bytes.
+
+        NOTE: microcompact is intentionally a no-op — its legacy unconditional
+        tool-result clearing destroyed context; autocompact handles pressure.
+        See services/compact/micro_compact.py.
 
         Called before every LLM API call.
         """
-        # Lazy imports: snip_compact and context_collapse both import
-        # MessageItem from this module, so top-level imports here would
-        # be a cycle.
         from services.compact.context_collapse import apply_context_collapse
         from services.compact.snip_compact import snip_compact_if_needed
 
         context_window = self.config.model.context_window
 
-        # snip — lossless drop of oldest message groups if way over threshold
+        self.apply_tool_result_budget()
+
         self._messages = snip_compact_if_needed(
             self._messages, context_window, self._model_name,
         )
 
-        # microcompact — always runs, zero cost
         self._messages = micro_compact(self._messages)
 
-        # context collapse — BEFORE autocompact, deliberate
         self._messages = apply_context_collapse(self._messages, context_window)
 
-        # autocompact — runs if still over threshold
         if self._compact_fn:
             result = await auto_compact_if_needed(
                 messages=self._messages,
@@ -219,6 +266,7 @@ class ContextManager:
                 tracking=self._compact_tracking,
                 model=self._model_name,
                 compact_fn=self._compact_fn,
+                transcript_path=self._transcript_path,
             )
 
             if result:
@@ -229,9 +277,12 @@ class ContextManager:
                         f"Context compacted: {result.pre_compact_tokens} -> "
                         f"{result.post_compact_tokens} tokens"
                     )
-
-        # tool result budget — cap aggregate tool result bytes
-        self.apply_tool_result_budget()
+                    if self._summary_sink:
+                        try:
+                            from services.compact.prompt import format_compact_summary
+                            self._summary_sink(format_compact_summary(result.summary))
+                        except Exception:
+                            logger.warning("Failed to persist compaction summary", exc_info=True)
 
         return self._build_api_messages()
 
@@ -243,11 +294,22 @@ class ContextManager:
         return self._build_api_messages()
 
     def _build_api_messages(self) -> list[dict[str, Any]]:
-        """Build the final message list for the API call."""
-        messages = [{"role": "system", "content": self._system_prompt}]
+        """Build the final message list for the API call.
+
+        The turn-1 user-context reminder (agentMd/currentDate) is prepended
+        HERE — at every build, after the system prompt and before the
+        conversation. Doing it at build time (not storing it) means it survives
+        compaction and is always present on a resumed session.
+        """
+        system_content = self._system_prompt
+        if self._system_context_suffix:
+            system_content = f"{system_content}\n\n{self._system_context_suffix}"
+        messages = [{"role": "system", "content": system_content}]
+        if self._user_context_reminder:
+            messages.append({"role": "user", "content": self._user_context_reminder})
         for item in self._messages:
             messages.append(item.to_dict())
-        return messages
+        return _ensure_tool_result_pairing(messages)
 
     def clear(self) -> None:
         """Clear all messages (for /clear command)."""
@@ -257,7 +319,7 @@ class ContextManager:
     def get_token_stats(self) -> dict[str, Any]:
         """
         Get token usage statistics with warning states. Warning thresholds come
-        from calculate_token_warning_state() (single source of truth, CC parity).
+        from calculate_token_warning_state.
         """
         context_window = self.config.model.context_window
         current_tokens = estimate_messages_tokens(self._messages, self._model_name)
@@ -281,24 +343,24 @@ class ContextManager:
 
     def apply_tool_result_budget(self) -> None:
         """
-        Cap aggregate tool result size per turn.
-        Claude Code: applyToolResultBudget() — MAX_TOOL_RESULTS_PER_MESSAGE_CHARS = 200,000
+        Cap EACH tool result message independently — the enforceToolResultBudget
+        is PER-MESSAGE, not aggregate (MAX_TOOL_RESULTS_PER_MESSAGE_CHARS =
+        200,000). Two 150K results in different messages are both under budget
+        and untouched; does NOT sum across messages and truncate the largest.
+
+        persists an over-budget result to disk and leaves a read-it-back
+        preview; lacking that subsystem, we truncate a single over-budget message
+        with a clear marker. (Per-tool result-size caps — Bash 30K, Grep 20K,
+        default 100K — already keep individual results well under 200K, so this
+        rarely fires; the point is to stop the destructive cross-message
+        aggregate truncation that diverged from.)
         """
-        MAX_AGGREGATE = 200_000
-        tool_messages = [m for m in self._messages if m.role == "tool"]
-
-        total = sum(len(m.content) for m in tool_messages)
-        if total <= MAX_AGGREGATE:
-            return
-
-        # Sort by size (largest first) and truncate until under budget
-        sorted_tools = sorted(tool_messages, key=lambda m: len(m.content), reverse=True)
-        excess = total - MAX_AGGREGATE
-
-        for msg in sorted_tools:
-            if excess <= 0:
-                break
-            if len(msg.content) > 10_000:  # Only truncate large results
-                old_len = len(msg.content)
-                msg.content = msg.content[:5000] + "\n... [result truncated for context budget]"
-                excess -= (old_len - len(msg.content))
+        MAX_PER_MESSAGE = 200_000
+        for msg in self._messages:
+            if msg.role == "tool" and len(msg.content) > MAX_PER_MESSAGE:
+                over = len(msg.content) - MAX_PER_MESSAGE
+                msg.content = (
+                    msg.content[:MAX_PER_MESSAGE]
+                    + f"\n... [tool result truncated: {over} chars over the "
+                    f"{MAX_PER_MESSAGE}-char per-result budget]"
+                )

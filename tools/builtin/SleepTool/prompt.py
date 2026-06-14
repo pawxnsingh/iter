@@ -1,5 +1,5 @@
 """
-SleepTool prompt — verbatim from Claude Code src/tools/SleepTool/prompt.ts
+SleepTool prompt.
 (SLEEP_TOOL_PROMPT). TICK_TAG substituted with our 'tick'.
 """
 

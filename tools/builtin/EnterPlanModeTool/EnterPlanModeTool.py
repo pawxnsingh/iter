@@ -1,7 +1,7 @@
 """
 EnterPlanMode tool — switches to plan mode (blocks write tools).
 
-Source: Claude Code src/tools/EnterPlanModeTool/
+Source: src/tools/EnterPlanModeTool/
 
 Plan mode transitions:
   EnterPlanMode: switches to plan mode (blocks write tools)
@@ -16,8 +16,6 @@ The plan file is written to .ai-agent/plans/<timestamp>.md
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from pydantic import BaseModel
 
 from tools.base import Tool, ToolInvocation, ToolKind, ToolResult
@@ -25,7 +23,7 @@ from tools.builtin.EnterPlanModeTool.prompt import ENTER_PLAN_MODE_TOOL_PROMPT
 
 
 class EnterPlanParams(BaseModel):
-    pass  # No parameters needed
+    pass
 
 
 class EnterPlanModeTool(Tool):
@@ -42,19 +40,17 @@ class EnterPlanModeTool(Tool):
         return True
 
     async def execute(self, invocation: ToolInvocation) -> ToolResult:
-        plan_dir = invocation.cwd / ".ai-agent" / "plans"
-        plan_dir.mkdir(parents=True, exist_ok=True)
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        plan_path = plan_dir / f"plan_{timestamp}.md"
-        plan_path.write_text("# Implementation Plan\n\n", encoding="utf-8")
-
         return ToolResult.success_result(
-            f"Entered plan mode. Write your plan to: {plan_path}\n"
-            f"Use read-only tools (Read, Grep, Glob) to explore.\n"
-            f"Call ExitPlanMode when your plan is ready for review.",
-            metadata={
-                "plan_path": str(plan_path),
-                "set_permission_mode": "plan",
-            },
+            "Entered plan mode. You should now focus on exploring the codebase "
+            "and designing an implementation approach.\n\n"
+            "In plan mode, you should:\n"
+            "1. Thoroughly explore the codebase to understand existing patterns\n"
+            "2. Identify similar features and architectural approaches\n"
+            "3. Consider multiple approaches and their trade-offs\n"
+            "4. Use AskUserQuestion if you need to clarify the approach\n"
+            "5. Design a concrete implementation strategy\n"
+            "6. When ready, use ExitPlanMode to present your plan for approval\n\n"
+            "Remember: DO NOT write or edit any files yet. This is a read-only "
+            "exploration and planning phase.",
+            metadata={"set_permission_mode": "plan"},
         )

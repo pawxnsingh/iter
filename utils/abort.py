@@ -1,7 +1,7 @@
 """
 AbortController for cancellation propagation.
 
-Claude Code uses AbortController + signal cascading so user Ctrl+C
+uses AbortController + signal cascading so user Ctrl+C
 propagates through the tool execution chain. We replicate this with
 asyncio.Event.
 """
@@ -41,7 +41,7 @@ class AbortController:
     def create_child(self) -> AbortController:
         """
         Create a child controller. If parent aborts, child aborts too.
-        Mirrors Claude Code's createChildAbortController().
+        Mirrors the createChildAbortController.
         """
         child = AbortController()
         self._children.append(child)

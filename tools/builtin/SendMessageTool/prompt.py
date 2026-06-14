@@ -1,6 +1,5 @@
 """
-SendMessageTool prompt — verbatim from Claude Code
-src/tools/SendMessageTool/prompt.ts (getPrompt() base output, without
+SendMessageTool prompt.
 the UDS_INBOX feature-gated cross-session block we don't have).
 """
 

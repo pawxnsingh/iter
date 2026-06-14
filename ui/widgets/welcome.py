@@ -20,7 +20,7 @@ ASCII_LOGO = r"""
 WELCOME_MD = """\
 ## Welcome
 
-A small Claude Code-style coding CLI, inspired by [toad](https://github.com/batrachianai/toad).
+A small agentic coding CLI, inspired by [toad](https://github.com/batrachianai/toad).
 
 Type a message below to start. Use `/help` for commands · `@` to reference a file · `F1` for shortcuts.
 """

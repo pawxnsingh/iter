@@ -59,6 +59,7 @@ class FileDiff:
 class ToolInvocation:
     params: dict[str, Any]
     cwd: Path
+    abort_controller: Any = None
 
 
 @dataclass
@@ -67,7 +68,6 @@ class ToolConfirmation:
     params: dict[str, Any]
     description: str
 
-    # shell commands
     command: str | None = None
     is_dangerous: bool = False
 
@@ -81,9 +81,6 @@ class ToolResult:
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     exit_code: int | None = None
-    # Image attachments for multimodal tool results (CC: FileRead returns an
-    # image block for image files). Each entry: {"media_type": str, "data":
-    # base64-str}. The query loop turns these into provider image blocks.
     images: list[dict[str, str]] = field(default_factory=list)
 
     @classmethod
@@ -116,8 +113,23 @@ class ToolResult:
     def to_model_output(self) -> str:
         if self.success:
             return self.output
-
+        if not self.error:
+            return self.output
         return f"ERROR: {self.error}\n\nOUTPUT:\n{self.output}"
+
+
+PERSISTENCE_CHAR_CAP = 50_000
+
+
+def effective_result_threshold(tool: "Tool") -> float:
+    """getPersistenceThreshold: the effective
+    cap is min(tool.maxResultSizeChars, 50_000) — UNLESS the tool opts out with
+    an infinite declared cap (FileRead: maxResultSizeChars=Infinity, it
+    self-bounds via its own token limit, so persisting+re-reading it is circular)."""
+    declared = tool.max_result_size_chars
+    if declared == float("inf"):
+        return declared
+    return min(declared, PERSISTENCE_CHAR_CAP)
 
 
 def truncate_tool_result(
@@ -125,30 +137,37 @@ def truncate_tool_result(
     tool: "Tool",
     *,
     call_id: str | None = None,
+    session_dir: "Path | None" = None,
 ) -> "ToolResult":
-    """Cap a ToolResult's output at the tool's `max_result_size_chars`.
+    """Cap a ToolResult's output at the tool's effective persistence threshold
+    (min(declared, 50_000); ∞ for opt-out tools — getPersistenceThreshold).
 
     Two paths:
-      • call_id provided → persist overflow to disk via result_storage,
-        replace `output` with a reference (the orchestration path).
-      • call_id None → fall back to plain in-place truncation with a
-        suffix (the registry path).
+      • call_id + session_dir → persist overflow to disk via result_storage and
+        replace `output` with a preview + filepath.
+      • otherwise → plain in-place truncation with a suffix.
 
-    Returns the result unchanged if it's already within the cap.
+    Returns the result unchanged if it's already within the threshold.
     """
-    if len(result.output) <= tool.max_result_size_chars:
+    if result.images:
         return result
 
+    threshold = effective_result_threshold(tool)
+    if len(result.output) <= threshold:
+        return result
+
+    max_chars = int(threshold)
     if call_id is not None:
         from services.tools.result_storage import maybe_persist_large_result
         new_output = maybe_persist_large_result(
             output=result.output,
             tool_name=tool.name,
             tool_use_id=call_id,
-            max_chars=tool.max_result_size_chars,
+            session_dir=session_dir,
+            max_chars=max_chars,
         )
     else:
-        new_output = result.output[:tool.max_result_size_chars] + "\n... [output truncated]"
+        new_output = result.output[:max_chars] + "\n... [output truncated]"
 
     return ToolResult(
         success=result.success,
@@ -157,18 +176,14 @@ def truncate_tool_result(
         truncated=True,
         metadata=result.metadata,
         exit_code=result.exit_code,
+        images=result.images,
     )
 
 
 class Tool(abc.ABC):
     name: str = "base_tool"
-    # Short tool summary — what shows up in the tool list. One sentence.
     description: str = "Base Tool"
-    # Long model-facing behavioral guidance. Concatenated onto `description`
-    # in the JSON schema sent to the model. Holds the verbatim Claude Code
-    # per-tool prompt content. None = no extended guidance.
     prompt: str | None = None
-    # default for the tool call, like if the grep tool return the 500k char that can eat up all the context window
     max_result_size_chars = 100_000
     kind: ToolKind = ToolKind.READ
 
@@ -189,7 +204,6 @@ class Tool(abc.ABC):
     def validate_param(self, params: dict[str, Any]) -> list[str]:
         schema = self.schema
         if isinstance(schema, type) and issubclass(schema, BaseModel):
-            # here isinstance check the schema is class not an object
             try:
                 schema(**params)
             except ValidationError as e:
@@ -226,35 +240,23 @@ class Tool(abc.ABC):
             description=f"Execute: {self.name}",
         )
 
-    # there can be scenarios, where we can execute tool concurrently
     def is_concurrency_safe(self, params: dict) -> bool:
         return False
 
-    # if read only we can skip permissions
     def is_read_only(self, params: dict) -> bool:
         return False
 
-    # get extra warnings, if that's little distructive
+    def check_permissions(self, params: dict, mode) -> tuple[str, str] | None:
+        return None
+
     def is_destructive(self, params: dict) -> bool:
         return False
 
-    # Value matched against rule sub-patterns like `Bash(npm install)` or
-    # `Read(./src/*)`. The string here is what a rule's `ruleContent` is
-    # matched against (Bash → command, file tools → file_path, search tools
-    # → pattern). Returning None means this tool only supports tool-name
-    # rules with no sub-pattern.
-    # Claude Code parity: preparePermissionMatcher() in each tool returns a
-    # `(pattern) => bool` closure; we expose the matched value instead and
-    # let the rule matcher build the pattern check.
     def get_permission_value(self, params: dict) -> str | None:
         return None
 
     def to_openai_schema(self) -> dict[str, Any]:
-        # Claude Code concatenates the per-tool prompt onto the description
-        # so the model gets full behavioral guidance in the tools block.
-        full_description = self.description
-        if self.prompt:
-            full_description = f"{self.description}\n\n{self.prompt}"
+        full_description = self.prompt if self.prompt else self.description
 
         schema = self.schema
         if isinstance(schema, type) and issubclass(schema, BaseModel):

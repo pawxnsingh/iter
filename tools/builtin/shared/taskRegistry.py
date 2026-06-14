@@ -1,7 +1,7 @@
 """
 Shared task registry used by TaskCreate / TaskGet / TaskList / TaskUpdate / TaskStop.
 
-Mirrors Claude Code's tools/shared/ pattern — content shared across multiple
+Mirrors the tools/shared/ pattern — content shared across multiple
 tool directories lives here rather than being duplicated.
 """
 
@@ -16,25 +16,16 @@ class Task:
     id: str
     subject: str
     description: str = ""
-    status: str = "pending"  # pending, in_progress, completed, deleted
+    status: str = "pending"
     owner: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-# Global task store (shared across tool instances)
 _tasks: dict[str, Task] = {}
 
 
 def all_tasks() -> dict[str, Task]:
     return _tasks
-
-
-# ── Task lifecycle hooks (CC parity) ──────────────────────────────────
-# TaskCreate fires TaskCreated; TaskUpdate fires TaskCompleted when a task is
-# marked completed. Both read the frozen hooks snapshot (no HookExecutor in
-# scope at the tool layer). Mirrors CC's executeTaskCreatedHooks /
-# executeTaskCompletedHooks (utils/hooks.ts). A blocking hook returns an error
-# string the caller surfaces to abort the create/complete.
 
 
 def _task_hook_executor():

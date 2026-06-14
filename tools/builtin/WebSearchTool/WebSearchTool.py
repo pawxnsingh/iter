@@ -20,7 +20,7 @@ class WebSearchParams(BaseModel):
 
 class WebSearchTool(Tool):
     name = "WebSearch"
-    description = "Allows Claude to search the web and use the results to inform responses"
+    description = "Search the web and use the results to inform responses"
     prompt = WEB_SEARCH_PROMPT
     kind = ToolKind.NETWORK
     schema = WebSearchParams
@@ -34,6 +34,12 @@ class WebSearchTool(Tool):
     async def execute(self, invocation: ToolInvocation) -> ToolResult:
         params = WebSearchParams(**invocation.params)
 
+        if params.allowed_domains and params.blocked_domains:
+            return ToolResult.error_result(
+                "Cannot specify both allowed_domains and blocked_domains in the "
+                "same request. Use one or the other."
+            )
+
         try:
             results = DDGS().text(
                 params.query,
@@ -46,7 +52,6 @@ class WebSearchTool(Tool):
         except Exception as e:
             return ToolResult.error_result(f"Search failed: {e}")
 
-        # Domain filtering (CC parity: allowed_domains / blocked_domains).
         results = self._filter_domains(
             results, params.allowed_domains, params.blocked_domains
         )
@@ -70,6 +75,11 @@ class WebSearchTool(Tool):
 
             output_lines.append("")
 
+        output_lines.append(
+            "REMINDER: You MUST include the sources above in your response to "
+            "the user using markdown hyperlinks."
+        )
+
         return ToolResult.success_result(
             "\n".join(output_lines),
             metadata={
@@ -79,7 +89,7 @@ class WebSearchTool(Tool):
 
     @staticmethod
     def _filter_domains(results, allowed, blocked):
-        """Apply allowed/blocked domain filters (CC parity). A result's URL
+        """Apply allowed/blocked domain filters. A result's URL
         host must be in `allowed` (if set) and not in `blocked`. Domain match
         is suffix-based so 'example.com' matches 'www.example.com'."""
         from urllib.parse import urlparse

@@ -1,3 +1,3 @@
-"""Mirrors Claude Code src/tools/ToolSearchTool/constants.ts."""
+"""ToolSearch tool constants."""
 
 TOOL_SEARCH_TOOL_NAME = "ToolSearch"

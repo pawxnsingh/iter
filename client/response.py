@@ -6,10 +6,8 @@ from enum import Enum
 from typing import Any
 
 
-# this gonna contain the schema
-# of what gonna be returned from the model(llm) can be
 class StreamEventType(str, Enum):
-    TEXT_DELTA = "text_delta"  # like the way, message chunks are getting streamed
+    TEXT_DELTA = "text_delta"
     MESSAGE_COMPLETE = "message_complete"
     ERROR = "error"
 
@@ -22,17 +20,17 @@ class StreamEventType(str, Enum):
 class TextDelta:
     content: str
 
-    # This defines how the object is converted to a string.
     def __str__(self):
         return self.content
 
 
 @dataclass
 class TokenUsage:
-    prompt_tokens: int = 0  # the system prompt also comes under this
+    prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
     cached_tokens: int = 0
+    cache_creation_tokens: int = 0
 
     def __add__(self, other: TokenUsage):
         return TokenUsage(
@@ -40,6 +38,7 @@ class TokenUsage:
             completion_tokens=self.completion_tokens + other.completion_tokens,
             total_tokens=self.total_tokens + other.total_tokens,
             cached_tokens=self.cached_tokens + other.cached_tokens,
+            cache_creation_tokens=self.cache_creation_tokens + other.cache_creation_tokens,
         )
 
 
@@ -61,9 +60,9 @@ class ToolCall:
 class StreamEvent:
     type: StreamEventType
     text_delta: TextDelta | None = (
-        None  # this can be null, why if there is a tool call or something
+        None
     )
-    error: str | None = None  # probably its going to be str
+    error: str | None = None
     finish_reason: str | None = None
     tool_call_delta: ToolCallDelta | None = None
     tool_call: ToolCall | None = None

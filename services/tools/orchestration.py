@@ -1,18 +1,16 @@
 """
 Tool orchestration: Partition tools into parallel/serial batches.
 
-Source: Claude Code src/services/tools/toolOrchestration.ts
-
 The key insight: read-only tools can run in parallel safely,
 but write tools must run one at a time.
 
-Algorithm (exact from Claude Code):
+Algorithm:
   1. Walk tool calls in order
   2. Consecutive concurrency-safe tools → one batch (parallel)
   3. Each non-safe tool → its own batch (serial)
   4. Execute batches in order
 
-Max concurrency: 10 (CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY)
+Max concurrency: 10
 """
 
 from __future__ import annotations
@@ -61,7 +59,6 @@ def partition_tool_calls(
 ) -> list[Batch]:
     """
     Partition tool calls into batches.
-    Claude Code: partitionToolCalls() in toolOrchestration.ts line 91.
 
     Consecutive concurrency-safe tools → one batch (run in parallel)
     Each non-safe tool → its own batch (run serial)
@@ -75,9 +72,8 @@ def partition_tool_calls(
             try:
                 is_safe = tool.is_concurrency_safe(call.arguments)
             except Exception:
-                is_safe = False  # Conservative: treat errors as not-safe
+                is_safe = False
 
-        # Merge with previous batch if BOTH are concurrency-safe
         if is_safe and batches and batches[-1].is_concurrency_safe:
             batches[-1].calls.append(call)
         else:
@@ -90,12 +86,22 @@ async def execute_tool_call(
     call: ToolCallRequest,
     tool: Tool,
     cwd: Path,
+    abort_controller: Any = None,
+    session_dir: Path | None = None,
 ) -> ToolCallResult:
     """Execute a single tool call."""
-    invocation = ToolInvocation(params=call.arguments, cwd=cwd)
+    if abort_controller is not None and getattr(abort_controller, "aborted", False):
+        return ToolCallResult(
+            call_id=call.call_id,
+            name=call.name,
+            result=ToolResult.error_result("Tool execution interrupted by user"),
+            arguments=call.arguments,
+        )
+    invocation = ToolInvocation(
+        params=call.arguments, cwd=cwd, abort_controller=abort_controller
+    )
 
     try:
-        # Validate params
         validation_errors = tool.validate_param(call.arguments)
         if validation_errors:
             result = ToolResult.error_result(
@@ -104,9 +110,9 @@ async def execute_tool_call(
             )
         else:
             result = await tool.execute(invocation=invocation)
-            # Enforce max result size; call_id triggers the persist-to-disk
-            # branch inside truncate_tool_result for any overflow.
-            result = truncate_tool_result(result, tool, call_id=call.call_id)
+            result = truncate_tool_result(
+                result, tool, call_id=call.call_id, session_dir=session_dir
+            )
 
     except Exception as e:
         logger.exception(f"Tool {call.name} raised unexpected error")
@@ -127,25 +133,36 @@ async def run_tools(
     calls: list[ToolCallRequest],
     tools: dict[str, Tool],
     cwd: Path,
+    abort_controller: Any = None,
+    session_dir: Path | None = None,
 ) -> AsyncGenerator[ToolCallResult, None]:
     """
     Execute tool calls with concurrency control.
-    Claude Code: runTools() in toolOrchestration.ts line 19.
 
     Read-only batches run in parallel (up to MAX_TOOL_USE_CONCURRENCY).
     Write batches run serially (one at a time).
     """
     batches = partition_tool_calls(calls, tools)
 
+    def _aborted() -> bool:
+        return abort_controller is not None and getattr(abort_controller, "aborted", False)
+
     for batch in batches:
+        if _aborted():
+            for call in batch.calls:
+                yield ToolCallResult(
+                    call_id=call.call_id,
+                    name=call.name,
+                    result=ToolResult.error_result("Tool execution interrupted by user"),
+                    arguments=call.arguments,
+                )
+            continue
         if batch.is_concurrency_safe and len(batch.calls) > 1:
-            # Run read-only tools in PARALLEL
             logger.debug(
                 f"Running {len(batch.calls)} tools in parallel: "
                 f"{[c.name for c in batch.calls]}"
             )
 
-            # Limit concurrency
             semaphore = asyncio.Semaphore(MAX_TOOL_USE_CONCURRENCY)
 
             async def run_with_semaphore(call: ToolCallRequest) -> ToolCallResult:
@@ -158,7 +175,7 @@ async def run_tools(
                             result=ToolResult.error_result(f"Unknown tool: {call.name}"),
                             arguments=call.arguments,
                         )
-                    return await execute_tool_call(call, tool, cwd)
+                    return await execute_tool_call(call, tool, cwd, abort_controller, session_dir)
 
             tasks = [run_with_semaphore(call) for call in batch.calls]
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -174,7 +191,6 @@ async def run_tools(
                 else:
                     yield result
         else:
-            # Run write tools SERIALLY
             for call in batch.calls:
                 tool = tools.get(call.name)
                 if not tool:
@@ -187,4 +203,4 @@ async def run_tools(
                     continue
 
                 logger.debug(f"Running tool serially: {call.name}")
-                yield await execute_tool_call(call, tool, cwd)
+                yield await execute_tool_call(call, tool, cwd, abort_controller, session_dir)

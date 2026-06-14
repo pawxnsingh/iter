@@ -24,13 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# Every test needs Config.validate() to pass — set a dummy key once.
 os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test")
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Helpers
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 def _text(widget) -> str:
@@ -58,11 +52,6 @@ class WidgetHarness:
         return _App()
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 1. Primitives
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def test_pill_wraps_in_half_blocks() -> None:
     from ui.widgets.pill import pill
 
@@ -79,11 +68,6 @@ def test_pill_accepts_content_input() -> None:
 
     result = pill(Content("x"))
     assert "x" in result.plain
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 2. Widget harness tests
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.asyncio
@@ -113,7 +97,6 @@ async def test_throbber_renders_gradient_chars() -> None:
         await pilot.pause()
         rendered = t.render()
         text = rendered.plain
-        # Every cell should be the throbber glyph
         assert len(text) >= 1
         assert set(text) == {"━"}
 
@@ -126,7 +109,6 @@ async def test_flash_show_and_style_class() -> None:
     app = WidgetHarness.make_app(f)
     async with app.run_test(size=(80, 5)) as pilot:
         await pilot.pause()
-        # Initially hidden
         assert not f.visible
 
         f.flash("hello", style="success", duration=10)
@@ -135,7 +117,6 @@ async def test_flash_show_and_style_class() -> None:
         assert f.has_class("-success")
         assert not f.has_class("-error")
 
-        # Switching style removes prior class
         f.flash("oops", style="error", duration=10)
         await pilot.pause()
         assert f.has_class("-error")
@@ -153,7 +134,6 @@ async def test_flash_auto_hides_after_duration() -> None:
         f.flash("gone in a flash", style="default", duration=0.1)
         await pilot.pause()
         assert f.visible
-        # Wait just past the duration; pilot.pause advances virtual time
         for _ in range(30):
             await pilot.pause(0.05)
             if not f.visible:
@@ -170,9 +150,7 @@ async def test_user_input_composes_chevron_and_markdown() -> None:
     app = WidgetHarness.make_app(widget)
     async with app.run_test(size=(80, 10)) as pilot:
         await pilot.pause()
-        # Chevron label present
         assert widget.query_one("#prompt-chevron", Label)
-        # Markdown content present
         assert widget.query_one(Markdown)
 
 
@@ -200,18 +178,11 @@ async def test_agent_response_streaming_accumulates() -> None:
         await resp.append_fragment("# Title\n\n")
         await resp.append_fragment("Hello ")
         await resp.append_fragment("**world**")
-        # Flush any pending stream writes
         for _ in range(10):
             await pilot.pause(0.02)
-        # The source stays tracked internally — sanity-check via the
-        # stream's write path having been exercised (children mounted).
         assert resp._stream is not None
-        # Rendered children: at minimum a heading + a paragraph block
         blocks = list(resp.query("MarkdownBlock"))
         assert blocks, "MarkdownStream did not mount any blocks"
-
-
-# ─── ToolCall lifecycle ────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -255,7 +226,6 @@ async def test_tool_call_success_completion() -> None:
         assert not t.is_error
         assert t.has_class("-success")
         assert t.has_content
-        # Stays collapsed on success
         assert not t.expanded
 
 
@@ -279,7 +249,6 @@ async def test_tool_call_error_auto_expands() -> None:
         await pilot.pause()
         assert t.is_error
         assert t.has_class("-error")
-        # Errors auto-expand so the user sees what went wrong
         assert t.expanded
         assert t.has_class("-expanded")
 
@@ -303,7 +272,6 @@ async def test_tool_call_diff_mounts_diffview() -> None:
             truncated=False,
         )
         await pilot.pause()
-        # Diff is rendered with our homegrown DiffView widget
         assert list(t.query(DiffView)), "diff should have rendered as DiffView"
 
 
@@ -327,19 +295,12 @@ async def test_tool_call_click_toggles_expansion() -> None:
         await pilot.pause()
         assert t.has_content
         assert not t.expanded
-        # Drive the widget directly — equivalent to what the click handler
-        # does; avoids constructing Click events (whose signature drifts).
         t.expanded = True
         await pilot.pause()
         assert t.has_class("-expanded")
         t.expanded = False
         await pilot.pause()
         assert not t.has_class("-expanded")
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 3. Integration — Conversation drives the event flow
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 async def _wait_for_agent_ready(conv, pilot, timeout: float = 3.0) -> None:
@@ -377,8 +338,6 @@ async def test_full_agent_turn_simulation() -> None:
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         conv = app.query_one(Conversation)
-        # Snapshot busy_count BEFORE we add our fake start (worker may have
-        # already incremented it for its own startup note flow).
         base_busy = conv.busy_count
 
         conv.post_message(AgentStarted())
@@ -470,11 +429,6 @@ async def test_flash_message_appears_on_conversation() -> None:
         assert flash.has_class("-success")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 4. Screen-level — bindings & modals
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 @pytest.mark.asyncio
 async def test_ctrl_c_clears_prompt_text() -> None:
     """With text in the prompt, Ctrl+C should clear it (not abort)."""
@@ -506,18 +460,7 @@ async def test_ctrl_q_exits_app() -> None:
         await pilot.pause()
         await pilot.press("ctrl+q")
         await pilot.pause()
-        # After ctrl+q, the pilot exits — we just need the app to no longer
-        # be actively running. `is_running` flips off on exit.
         assert app._exit, "Ctrl+Q did not request an exit"
-
-
-# Permission tests now live in test_toad_port_pass2.py against the new
-# fullscreen PermissionsScreen. The basic PermissionModal was removed.
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 5. SlashComplete deeper behavior
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.asyncio
@@ -541,7 +484,6 @@ async def test_slash_overlay_filters_results() -> None:
         initial_count = options.option_count
         assert initial_count > 5, "expected many commands in the unfiltered list"
 
-        # Filter down to "hel" — should only match /help
         input_box = slash.query_one(Input)
         input_box.value = "hel"
         for _ in range(20):

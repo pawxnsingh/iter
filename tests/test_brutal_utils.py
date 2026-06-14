@@ -16,11 +16,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# utils/paths.py
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def test_resolve_path_absolute_passthrough(tmp_path: Path) -> None:
     from utils.paths import resolve_path
 
@@ -38,7 +33,6 @@ def test_resolve_path_relative_joined_to_base(tmp_path: Path) -> None:
 def test_resolve_path_accepts_string_and_path() -> None:
     from utils.paths import resolve_path
 
-    # Both string and Path inputs should work
     r1 = resolve_path("/tmp", "x")
     r2 = resolve_path(Path("/tmp"), Path("x"))
     assert r1 == r2
@@ -57,7 +51,7 @@ def test_ensure_parent_directory_idempotent(tmp_path: Path) -> None:
 
     target = tmp_path / "x" / "y.txt"
     ensure_parent_directory(target)
-    ensure_parent_directory(target)  # should not raise
+    ensure_parent_directory(target)
 
 
 def test_is_binary_detects_null_byte(tmp_path: Path) -> None:
@@ -96,7 +90,6 @@ def test_display_path_rel_returns_relative(tmp_path: Path) -> None:
 def test_display_path_rel_outside_cwd_falls_back(tmp_path: Path) -> None:
     from utils.paths import display_path_rel_to_cwd
 
-    # /etc/hosts is outside tmp_path — should return as-is
     result = display_path_rel_to_cwd("/etc/hosts", tmp_path)
     assert result == "/etc/hosts"
 
@@ -105,11 +98,6 @@ def test_display_path_rel_none_cwd() -> None:
     from utils.paths import display_path_rel_to_cwd
 
     assert display_path_rel_to_cwd("/etc/hosts", None) == "/etc/hosts"
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# utils/text.py
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 def test_count_tokens_empty_string() -> None:
@@ -121,7 +109,6 @@ def test_count_tokens_empty_string() -> None:
 def test_count_tokens_approx_matches_length() -> None:
     from utils.text import count_tokens
 
-    # "hello world" is about 2 tokens with tiktoken
     n = count_tokens("hello world")
     assert 1 <= n <= 5
 
@@ -129,7 +116,6 @@ def test_count_tokens_approx_matches_length() -> None:
 def test_count_tokens_unknown_model_falls_back() -> None:
     from utils.text import count_tokens
 
-    # Non-real model should still return a number via fallback
     n = count_tokens("some text", model="not-a-real-model")
     assert n > 0
 
@@ -163,14 +149,12 @@ def test_truncate_text_preserve_lines_respects_newlines() -> None:
 
     text = "line1\nline2\nline3\n" * 100
     out = truncate_text(text, max_tokens=20, preserve_lines=True)
-    # Resulting content (minus suffix) should only contain whole lines
     assert out.endswith("[truncated]")
 
 
 def test_truncate_text_by_chars_when_no_line_fits() -> None:
     from utils.text import truncate_text
 
-    # Single massive line
     text = "x" * 100_000
     out = truncate_text(text, max_tokens=10, preserve_lines=True)
     assert out.endswith("[truncated]")
@@ -180,13 +164,7 @@ def test_truncate_text_suffix_larger_than_budget() -> None:
     from utils.text import truncate_text
 
     out = truncate_text("x" * 1000, max_tokens=1, suffix="[truncated]")
-    # When budget can't even fit the suffix, we just return the suffix
     assert out.strip() == "[truncated]"
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# utils/errors.py
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 def test_agent_error_str_plain() -> None:
@@ -234,11 +212,6 @@ def test_config_error_includes_file_and_key() -> None:
     assert e.details.get("config_file") == "/t/c.toml"
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# utils/abort.py
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 @pytest.mark.asyncio
 async def test_abort_controller_signals_and_reason() -> None:
     from utils.abort import AbortController
@@ -254,7 +227,7 @@ def test_abort_controller_check_raises() -> None:
     from utils.abort import AbortController, AbortError
 
     ctrl = AbortController()
-    ctrl.check()  # should not raise before abort
+    ctrl.check()
     ctrl.abort()
     with pytest.raises(AbortError) as ei:
         ctrl.check()
@@ -267,7 +240,6 @@ def test_abort_controller_abort_twice_is_noop() -> None:
     ctrl = AbortController()
     ctrl.abort("first")
     ctrl.abort("second")
-    # First reason sticks
     assert ctrl.reason == "first"
 
 
@@ -310,7 +282,6 @@ async def test_wait_for_abort_already_aborted() -> None:
 
     ctrl = AbortController()
     ctrl.abort("already")
-    # Should return immediately
     reason = await asyncio.wait_for(ctrl.wait_for_abort(), timeout=0.1)
     assert reason == "already"
 

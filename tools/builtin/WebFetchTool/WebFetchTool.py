@@ -1,7 +1,7 @@
 """
 WebFetch tool — fetch a URL and process its content with a prompt.
 
-Source: claude-code/src/tools/WebFetchTool/WebFetchTool.ts. CC contract:
+Source: contract:
 takes `url` + `prompt`, fetches the page, converts HTML→text, then runs the
 prompt against the content with a small fast model and returns the model's
 answer (not raw HTML). We mirror that: fetch → strip HTML → one-shot LLM call.
@@ -53,6 +53,10 @@ class WebFetchTool(Tool):
         if parsed.scheme not in ("http", "https"):
             return ToolResult.error_result("Url must be http:// or https://")
 
+        url_to_fetch = params.url
+        if parsed.scheme == "http":
+            url_to_fetch = parsed._replace(scheme="https").geturl()
+
         blocked = self._ssrf_block(parsed.hostname or "")
         if blocked:
             return ToolResult.error_result(blocked)
@@ -61,7 +65,7 @@ class WebFetchTool(Tool):
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(params.timeout), follow_redirects=True
             ) as client:
-                response = await client.get(params.url)
+                response = await client.get(url_to_fetch)
                 response.raise_for_status()
                 raw = response.text
                 final_url = str(response.url)
@@ -72,9 +76,7 @@ class WebFetchTool(Tool):
         except Exception as e:
             return ToolResult.error_result(f"Request failed: {e}")
 
-        # Redirect-to-different-host notice (CC parity: tells the model to
-        # re-fetch the redirect URL rather than silently following cross-host).
-        if urlparse(final_url).hostname != parsed.hostname:
+        if not self._is_permitted_redirect(url_to_fetch, final_url):
             return ToolResult.success_result(
                 f"REDIRECT: {params.url} redirected to a different host:\n{final_url}\n"
                 f"Make a new WebFetch request with this URL to fetch the content.",
@@ -85,8 +87,6 @@ class WebFetchTool(Tool):
         if len(text) > _MAX_CONTENT_CHARS:
             text = text[:_MAX_CONTENT_CHARS] + "\n... [content truncated]"
 
-        # Process the content with the prompt via a model call (CC: "Processes
-        # the content with the prompt using a small, fast model").
         answer = await self._process_with_prompt(params.prompt, text, final_url)
         return ToolResult.success_result(
             answer,
@@ -97,7 +97,24 @@ class WebFetchTool(Tool):
             },
         )
 
-    # ── helpers ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def _is_permitted_redirect(original_url: str, redirect_url: str) -> bool:
+        """isPermittedRedirect: same protocol + port, no
+        credentials on the redirect, and same hostname modulo a leading 'www.'."""
+        try:
+            o = urlparse(original_url)
+            r = urlparse(redirect_url)
+            if r.scheme != o.scheme:
+                return False
+            if (r.port or "") != (o.port or ""):
+                return False
+            if r.username or r.password:
+                return False
+            strip = lambda h: re.sub(r"^www\.", "", h or "")
+            return strip(o.hostname) == strip(r.hostname)
+        except ValueError:
+            return False
 
     def _ssrf_block(self, hostname: str) -> str | None:
         if not hostname:
@@ -114,7 +131,7 @@ class WebFetchTool(Tool):
         return None
 
     def _html_to_text(self, html: str) -> str:
-        """Lightweight HTML→text (CC uses HTML→markdown; we extract readable text)."""
+        """Lightweight HTML→text."""
         html = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", html)
         html = re.sub(r"(?i)<(br|/p|/div|/h[1-6]|/li)\s*/?>", "\n", html)
         text = re.sub(r"(?s)<[^>]+>", " ", html)

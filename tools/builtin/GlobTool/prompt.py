@@ -1,5 +1,5 @@
 """
-Glob tool prompt — verbatim from Claude Code src/tools/GlobTool/prompt.ts
+Glob tool prompt.
 DESCRIPTION constant.
 """
 

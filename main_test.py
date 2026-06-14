@@ -1,7 +1,7 @@
 """
 Flexible end-to-end test harness for the agentic core — no static asserts.
 
-This is a thin runner. Claude Code drives the testing in the conversation
+This is a thin runner. drives the testing in the conversation
 by invoking specific scenarios and reading the JSON-structured results.
 
 Usage:
@@ -15,7 +15,7 @@ Usage:
     uv run main_test.py "prompt" --tempdir               # run in a fresh tempdir, optionally with --setup-files
     uv run main_test.py "prompt" --quiet                 # suppress agent's debug prints
     uv run main_test.py --inspect-schemas                # dump tool inventory, no LLM
-    uv run main_test.py --direct-bash-security           # unit-style: BashTool blocks rm -rf /, mkfs, fork bomb
+    uv run main_test.py --direct-bash-security           # permission layer gates rm -rf /, mkfs, fork bomb (never executes them)
     uv run main_test.py --direct-max-turns               # unit-style: max_turns=3 fires "Max turns reached"
 """
 
@@ -45,8 +45,6 @@ from agent.event import AgentEventType  # noqa: E402
 from config.config import Config  # noqa: E402
 
 
-# ─── Colors ──────────────────────────────────────────────────────────────
-
 C_RESET = "\033[0m"
 C_DIM = "\033[2m"
 C_BOLD = "\033[1m"
@@ -73,8 +71,6 @@ def setup_logging(debug: bool) -> None:
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
-# ─── Result schema ───────────────────────────────────────────────────────
-
 @dataclass
 class ToolCallRecord:
     name: str
@@ -93,13 +89,11 @@ class RunResult:
     event_types: list[str] = field(default_factory=list)
     wall_time_s: float = 0.0
     ended_cleanly: bool = False
-    files_after: list[str] = field(default_factory=list)  # files in cwd after run
+    files_after: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2, default=str)
 
-
-# ─── Permission prompts ──────────────────────────────────────────────────
 
 async def always_approve(tool_name: str, message: str, is_destructive: bool) -> bool:
     return True
@@ -108,8 +102,6 @@ async def always_approve(tool_name: str, message: str, is_destructive: bool) -> 
 async def always_deny(tool_name: str, message: str, is_destructive: bool) -> bool:
     return False
 
-
-# ─── Setup helpers ───────────────────────────────────────────────────────
 
 def setup_test_files(cwd: Path) -> None:
     """Populate cwd with a small predictable fixture set."""
@@ -138,8 +130,6 @@ def list_files(cwd: Path) -> list[str]:
                 pass
     return sorted(out)
 
-
-# ─── Core runner ─────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def agent_session(
@@ -198,7 +188,6 @@ async def run_once(
                 permission_mode=permission_mode,
                 permission_prompt=permission_prompt,
             ) as agent:
-                # Map tool_call_start by call_id so we can attach result later
                 pending: dict[str, ToolCallRecord] = {}
                 async for event in agent.run(prompt):
                     result.event_types.append(event.type.value if hasattr(event.type, "value") else str(event.type))
@@ -227,29 +216,45 @@ async def run_once(
     return result
 
 
-# ─── Direct unit-style tests (bypass the LLM) ────────────────────────────
-
 async def direct_bash_security_test(cwd: Path | None = None) -> RunResult:
-    """Verify bash_security blocks destructive commands regardless of the model."""
-    from tools.base import ToolInvocation
+    """Verify dangerous commands are GATED BY THE PERMISSION LAYER (parity:
+    Bash never hard-denies on content; the permission checker routes them to
+    ask/deny). This NEVER executes the commands — it only checks the permission
+    decision, so it's safe to run."""
+    from core_types.permissions import (
+        PermissionBehavior, PermissionMode, ToolPermissionContext,
+    )
+    from permissions.checker import PermissionChecker
     from tools.builtin.BashTool import BashTool
 
     config = Config()
     if cwd:
         config.cwd = cwd
     tool = BashTool(config)
-
     actual_cwd = cwd or Path.cwd()
-    result = RunResult(prompt="[DIRECT] bash_security against destructive commands", cwd=str(actual_cwd))
+    result = RunResult(prompt="[DIRECT] permission layer gates destructive commands", cwd=str(actual_cwd))
     t0 = time.monotonic()
 
-    blocked = ["rm -rf /", "rm -rf /*", "mkfs.ext4 /dev/sda", ":(){ :|:& };:"]
-    for cmd in blocked:
-        r = await tool.execute(ToolInvocation(params={"command": cmd}, cwd=actual_cwd))
-        rec = ToolCallRecord(name="Bash", arguments={"command": cmd}, success=r.success, output=(r.output or r.error or "")[:300])
-        result.tool_calls.append(rec)
-        if r.success:
-            result.errors.append(f"FAILED to block: {cmd!r}")
+    checker = PermissionChecker(ToolPermissionContext(mode=PermissionMode.DEFAULT))
+    dangerous = ["rm -rf /", "rm -rf /*", "mkfs.ext4 /dev/sda", ":(){ :|:& };:",
+                 "find . -delete", "tee /etc/passwd", "echo x > /etc/y"]
+    for cmd in dangerous:
+        decision = await checker.check(tool, {"command": cmd})
+        gated = decision.behavior != PermissionBehavior.ALLOW
+        result.tool_calls.append(ToolCallRecord(
+            name="Bash(permission-check)", arguments={"command": cmd},
+            success=gated, output=f"behavior={decision.behavior.value}"))
+        if not gated:
+            result.errors.append(f"AUTO-ALLOWED dangerous cmd (should ask/deny): {cmd!r}")
+
+    for cmd in ["ls", "cat README.md", "git status"]:
+        decision = await checker.check(tool, {"command": cmd})
+        allowed = decision.behavior == PermissionBehavior.ALLOW
+        result.tool_calls.append(ToolCallRecord(
+            name="Bash(permission-check)", arguments={"command": cmd},
+            success=allowed, output=f"behavior={decision.behavior.value}"))
+        if not allowed:
+            result.errors.append(f"read wrongly gated: {cmd!r}")
 
     result.ended_cleanly = True
     result.wall_time_s = time.monotonic() - t0
@@ -314,8 +319,6 @@ async def direct_max_turns_test(cwd: Path | None = None) -> RunResult:
     return result
 
 
-# ─── Pretty printer (interactive mode) ──────────────────────────────────
-
 def print_result(r: RunResult) -> None:
     print()
     print(color("─" * 72, C_DIM))
@@ -340,8 +343,6 @@ def print_result(r: RunResult) -> None:
         print(f"  {preview}")
     print()
 
-
-# ─── Schema inspection ──────────────────────────────────────────────────
 
 def inspect_schemas() -> None:
     from tools.registry import create_default_registry
@@ -368,8 +369,6 @@ def inspect_schemas() -> None:
     print()
 
 
-# ─── Entrypoint ──────────────────────────────────────────────────────────
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Flexible agent test runner")
     parser.add_argument("prompt", nargs="?", default=None, help="Prompt to send the agent")
@@ -393,7 +392,6 @@ def main() -> int:
         inspect_schemas()
         return 0
 
-    # Resolve cwd
     tempdir = None
     if args.tempdir:
         tempdir = tempfile.mkdtemp(prefix="agent_e2e_")

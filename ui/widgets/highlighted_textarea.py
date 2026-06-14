@@ -29,7 +29,6 @@ from textual.widgets import TextArea
 from textual.widgets.text_area import Selection
 
 
-# `@path/to/file` or `@"path with spaces"`
 RE_MATCH_FILE_PROMPT = re.compile(r"(@\S+)|@\"(.*)\"")
 
 
@@ -105,7 +104,6 @@ class HighlightedTextArea(TextArea):
         )
         self.compact = True
 
-    # ─── Cache lifecycle ────────────────────────────────────────────
 
     def _clear_caches(self) -> None:
         self._highlight_lines = None
@@ -125,7 +123,6 @@ class HighlightedTextArea(TextArea):
     def _on_changed(self) -> None:
         self._clear_caches()
 
-    # ─── Highlighting ───────────────────────────────────────────────
 
     @property
     def highlight_lines(self) -> Sequence[Content]:
@@ -138,8 +135,6 @@ class HighlightedTextArea(TextArea):
             lang = self.highlight_language
             if lang == "markdown":
                 content = self.highlight_markdown(text)
-                # highlight() adds a trailing ``` to keep the fence parser
-                # happy; split & drop that virtual last line.
                 self._highlight_lines = content.split("\n", allow_blank=True)[:-1]
             elif lang == "shell":
                 content = self.highlight_shell(text)

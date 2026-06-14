@@ -1,8 +1,6 @@
 """
 Reactive compact: Emergency compaction triggered by API 413 errors.
 
-Source: Claude Code src/services/compact/reactiveCompact.ts
-
 This is Layer 4 — the last resort when the API rejects the prompt.
 Unlike autocompact (proactive), reactive compact fires AFTER a 413 error.
 
@@ -20,7 +18,6 @@ import logging
 
 from context.manager import MessageItem
 from services.compact.auto_compact import estimate_messages_tokens
-from services.compact.prompt import get_compact_user_summary_message
 from utils.text import count_tokens
 
 logger = logging.getLogger(__name__)
@@ -30,10 +27,10 @@ async def try_reactive_compact(
     messages: list[MessageItem],
     compact_fn,
     system_prompt: str,
+    transcript_path: str | None = None,
 ) -> list[MessageItem] | None:
     """
     Attempt emergency compaction after a 413 error.
-    Claude Code: tryReactiveCompact() in reactiveCompact.ts
 
     Returns compacted messages if successful, None if failed.
     """
@@ -44,31 +41,16 @@ async def try_reactive_compact(
     logger.info(f"Reactive compact triggered: {pre_tokens} tokens")
 
     try:
-        # Strip images from messages before compaction
         stripped = _strip_images(messages)
 
-        # Run full compaction
         summary = await compact_fn(stripped, system_prompt)
 
         if not summary or not summary.strip():
             logger.warning("Reactive compact returned empty summary")
             return None
 
-        # Build post-compact resume message (single source of truth).
-        summary_content = get_compact_user_summary_message(
-            summary, suppress_follow_up_questions=True
-        )
-
-        summary_msg = MessageItem(
-            role="user",
-            content=summary_content,
-            token_count=count_tokens(summary_content),
-        )
-
-        # Keep last 4 messages for immediate context
-        recent = messages[-4:] if len(messages) > 4 else []
-
-        compacted = [summary_msg] + recent
+        from services.compact.auto_compact import build_post_compact_messages
+        compacted = build_post_compact_messages(messages, summary, transcript_path)
         post_tokens = estimate_messages_tokens(compacted)
 
         logger.info(
@@ -86,7 +68,6 @@ async def try_reactive_compact(
 def _strip_images(messages: list[MessageItem]) -> list[MessageItem]:
     """
     Strip image references from messages before compaction.
-    Claude Code: stripImagesFromMessages() in compact.ts
 
     Images are replaced with [image] marker so the summary notes
     that an image was shared, without the token cost.
@@ -94,9 +75,7 @@ def _strip_images(messages: list[MessageItem]) -> list[MessageItem]:
     result = []
     for msg in messages:
         if "[image]" in msg.content or "data:image" in msg.content:
-            # Replace image content with marker
             content = msg.content
-            # Simple image stripping — replace base64 image data
             import re
             content = re.sub(
                 r'data:image/[^;]+;base64,[A-Za-z0-9+/=]+',

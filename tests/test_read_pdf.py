@@ -1,5 +1,5 @@
 """
-FileRead PDF = Claude Code parity: PDFs are read as VISION (pages rendered to
+FileRead PDF = PDFs are read as VISION (pages rendered to
 JPEG images via pdftoppm), never as extracted text and never dumped as raw
 bytes. These exercise the real pdftoppm/pdfinfo path (poppler-utils).
 """
@@ -15,7 +15,6 @@ from tools.base import ToolInvocation
 from tools.builtin.FileReadTool.FileReadTool import FileReadTool
 from tools.builtin.shared.pdf import parse_pdf_page_range, pdf_render_available
 
-# Skip the rendering tests if poppler isn't installed (parse tests still run).
 requires_poppler = pytest.mark.skipif(
     not pdf_render_available(), reason="poppler-utils (pdftoppm) not installed"
 )
@@ -77,21 +76,16 @@ def _make_pdf(path: Path, n_pages: int = 1, text: str | None = None) -> None:
     path.write_bytes(bytes(out))
 
 
-# ── pure parse_pdf_page_range (CC parity) ───────────────────────────────────
-
 def test_parse_page_range():
     assert parse_pdf_page_range("5") == (5, 5)
     assert parse_pdf_page_range("1-10") == (1, 10)
     first, last = parse_pdf_page_range("3-")
     assert first == 3 and last == math.inf
-    # invalid: zero, inverted, non-numeric, empty
     assert parse_pdf_page_range("0") is None
     assert parse_pdf_page_range("5-2") is None
     assert parse_pdf_page_range("abc") is None
     assert parse_pdf_page_range("") is None
 
-
-# ── rendering path (real pdftoppm) ──────────────────────────────────────────
 
 @requires_poppler
 def test_whole_small_pdf_renders_to_images():
@@ -110,7 +104,7 @@ def test_whole_small_pdf_renders_to_images():
         assert len(r.images) == 2
         assert all(img["media_type"] == "image/jpeg" for img in r.images)
         assert all(img["data"] for img in r.images)
-        assert "%PDF" not in (r.output or "")  # never dump raw PDF bytes
+        assert "%PDF" not in (r.output or "")
 
 
 @requires_poppler
@@ -134,7 +128,7 @@ def test_too_many_pages_without_range_errors():
     with tempfile.TemporaryDirectory() as t:
         cwd = Path(t)
         pdf = cwd / "big.pdf"
-        _make_pdf(pdf, 12)  # > PDF_AT_MENTION_INLINE_THRESHOLD (10)
+        _make_pdf(pdf, 12)
         cfg = Config()
         cfg.cwd = cwd
         r = _run(FileReadTool(cfg).execute(

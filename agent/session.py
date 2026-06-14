@@ -36,20 +36,24 @@ class Session:
         self.mcp_manager = None
         self.discovery_manager.discover_all()
 
-        # Session identity
         self.session_id = str(uuid.uuid4())
         self.created_at = datetime.now(timezone.utc)
         self.updated_at = datetime.now(timezone.utc)
         self._turn_count = 0
 
-        # Session persistence (JSONL transcripts)
         self.storage = SessionStorage(
             session_id=self.session_id,
             project_dir=str(config.cwd),
         )
 
+    @property
+    def transcript_path(self) -> str:
+        """Path to this session's JSONL transcript (includes it in every
+        hook payload). Tracks storage, so it stays correct across a resume
+        that re-points storage."""
+        return str(self.storage.path) if getattr(self, "storage", None) else ""
+
     async def initialize(self) -> None:
-        # Only load MCP if servers are configured (avoids heavy fastmcp import)
         if self.config.mcp_servers:
             from tools.mcp.mcp_manager import MCPManager
             self.mcp_manager = MCPManager(config=self.config)
@@ -58,13 +62,16 @@ class Session:
 
         self.discovery_manager.discover_all()
 
+        mcp_instructions = (
+            self.mcp_manager.get_server_instructions() if self.mcp_manager else None
+        )
         self.context_manager = ContextManager(
             config=self.config,
             user_memory=self._load_memory(),
             tools=self.tool_registry.get_tools(),
+            mcp_instructions=mcp_instructions,
         )
 
-        # Save initial session metadata
         self._save_metadata()
 
     def _load_memory(self) -> str | None:
@@ -98,6 +105,10 @@ class Session:
     def save_message(self, role: str, content: str, **extra) -> None:
         """Persist a message to the JSONL transcript."""
         self.storage.append(role=role, content=content, **extra)
+
+    def save_summary(self, summary: str) -> None:
+        """Persist a compaction summary record."""
+        self.storage.append_summary(summary)
 
     def _save_metadata(self) -> None:
         """Save session metadata alongside transcript."""

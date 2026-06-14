@@ -1,17 +1,93 @@
-from pathlib import Path
-
 from pydantic import BaseModel, Field
 
 from tools.base import (
     FileDiff,
     Tool,
-    ToolConfirmation,
     ToolInvocation,
     ToolKind,
     ToolResult,
 )
 from tools.builtin.FileEditTool.prompt import EDIT_PROMPT
 from utils.paths import ensure_parent_directory, resolve_path
+
+_LEFT_SINGLE, _RIGHT_SINGLE = "‘", "’"
+_LEFT_DOUBLE, _RIGHT_DOUBLE = "“", "”"
+
+_QUOTE_FOLD = str.maketrans({
+    _LEFT_SINGLE: "'", _RIGHT_SINGLE: "'",
+    _LEFT_DOUBLE: '"', _RIGHT_DOUBLE: '"',
+})
+
+
+def _is_opening_context(chars: list[str], index: int) -> bool:
+    """isOpeningContext."""
+    if index == 0:
+        return True
+    prev = chars[index - 1]
+    return prev in (" ", "\t", "\n", "\r", "(", "[", "{", "—", "–")
+
+
+def _apply_curly_double(s: str) -> str:
+    chars = list(s)
+    out: list[str] = []
+    for i, ch in enumerate(chars):
+        if ch == '"':
+            out.append(_LEFT_DOUBLE if _is_opening_context(chars, i) else _RIGHT_DOUBLE)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _apply_curly_single(s: str) -> str:
+    chars = list(s)
+    out: list[str] = []
+    for i, ch in enumerate(chars):
+        if ch == "'":
+            prev = chars[i - 1] if i > 0 else None
+            nxt = chars[i + 1] if i < len(chars) - 1 else None
+            if prev and nxt and prev.isalpha() and nxt.isalpha():
+                out.append(_RIGHT_SINGLE)
+            else:
+                out.append(_LEFT_SINGLE if _is_opening_context(chars, i) else _RIGHT_SINGLE)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _preserve_quote_style(old_string: str, actual_old: str, new_string: str) -> str:
+    """When the old_string match came via curly-quote folding, convert
+    straight quotes in new_string to the curly style the file actually uses, so
+    the edit doesn't downgrade the file's typography."""
+    if old_string == actual_old:
+        return new_string
+    has_double = _LEFT_DOUBLE in actual_old or _RIGHT_DOUBLE in actual_old
+    has_single = _LEFT_SINGLE in actual_old or _RIGHT_SINGLE in actual_old
+    if not has_double and not has_single:
+        return new_string
+    result = new_string
+    if has_double:
+        result = _apply_curly_double(result)
+    if has_single:
+        result = _apply_curly_single(result)
+    return result
+
+
+def _find_actual_old_string(content: str, old_string: str) -> str | None:
+    """Return the substring of `content` that matches `old_string`, allowing
+    straight↔curly quote differences. None if no match.
+
+    A literal match wins. Otherwise both sides are quote-folded; the match is
+    located in folded space and the ACTUAL (file-style) bytes at that position
+    are returned so the replacement preserves the file's quote characters.
+    """
+    if old_string in content:
+        return old_string
+    folded_content = content.translate(_QUOTE_FOLD)
+    folded_old = old_string.translate(_QUOTE_FOLD)
+    idx = folded_content.find(folded_old)
+    if idx == -1:
+        return None
+    return content[idx:idx + len(old_string)]
 
 
 class EditParams(BaseModel):
@@ -47,44 +123,15 @@ class FileEditTool(Tool):
         """Path matched against `Edit(<pattern>)` rules."""
         return params.get("file_path")
 
-    async def get_confirmation(
-        self, invocation: ToolInvocation
-    ) -> ToolConfirmation | None:
-        params = EditParams(**invocation.params)
-        path = resolve_path(invocation.cwd, params.file_path)
-
-        is_new_file = not path.exists()
-
-        old_content = ""
-        if not is_new_file:
-            try:
-                old_content = path.read_text(encoding="utf-8")
-            except Exception:
-                pass
-
-        diff = FileDiff(
-            path=path,
-            old_content=old_content,
-            new_content=params.new_string,
-            is_new_file=is_new_file,
-        )
-
-        action = "Created" if is_new_file else "Updated"
-
-        return ToolConfirmation(
-            tool_name=self.name,
-            params=invocation.params,
-            description=f"{action} file: {path}",
-            diff=diff,
-            affected_paths=[path],
-            is_dangerous=not is_new_file,
-        )
-
     async def execute(self, invocation: ToolInvocation) -> ToolResult:
         params = EditParams(**invocation.params)
         path = resolve_path(invocation.cwd, params.file_path)
 
-        # if path dont exist just write the new new_string, that it...
+        if params.old_string == params.new_string:
+            return ToolResult.error_result(
+                "No changes to make: old_string and new_string are exactly the same."
+            )
+
         if not path.exists():
             if params.old_string:
                 return ToolResult.error_result(
@@ -111,11 +158,14 @@ class FileEditTool(Tool):
                 },
             )
 
+        if path.suffix == ".ipynb":
+            return ToolResult.error_result(
+                "File is a Jupyter Notebook. Use the NotebookEdit to edit this file."
+            )
+
+        uses_crlf = b"\r\n" in path.read_bytes()
         old_content = path.read_text(encoding="utf-8")
 
-        # Read-before-edit + freshness (CC FileEditTool.validateInput errorCode
-        # 6/7): the file must have been Read this session, and not changed on
-        # disk since. The prompt promises this; enforce it.
         from tools.builtin.shared.readFileState import check_freshness
         freshness_error = check_freshness(path, old_content)
         if freshness_error:
@@ -126,42 +176,40 @@ class FileEditTool(Tool):
                 "old_string is empty but file exists. Provide old_string to edit, or use write_file to overwrite."
             )
 
-        occurrence_count = old_content.count(params.old_string)
+        actual_old = _find_actual_old_string(old_content, params.old_string)
+
+        occurrence_count = old_content.count(actual_old) if actual_old else 0
 
         if occurrence_count == 0:
-            return self._no_match_error(params.old_string, old_content, path)
+            return ToolResult.error_result(
+                f"String to replace not found in file.\nString: {params.old_string}"
+            )
 
         if occurrence_count > 1 and not params.replace_all:
             return ToolResult.error_result(
-                f"old_string found {occurrence_count} times in {path}. "
-                f"Either: \n"
-                f"1. Provide more context to make the match unique or\n"
-                f"2. Set replace_all=true to replace all occurrences",
-                metadata={
-                    "occurence_count": occurrence_count,
-                },
+                f"Found {occurrence_count} matches of the string to replace, but "
+                "replace_all is false. To replace all occurrences, set replace_all "
+                "to true. To replace only one occurrence, please provide more "
+                "context to uniquely identify the instance.\n"
+                f"String: {params.old_string}",
+                metadata={"occurence_count": occurrence_count},
             )
+
+        new_string = _preserve_quote_style(params.old_string, actual_old, params.new_string)
 
         if params.replace_all:
-            new_content = old_content.replace(params.old_string, params.new_string)
+            new_content = old_content.replace(actual_old, new_string)
             replace_count = occurrence_count
         else:
-            new_content = old_content.replace(params.old_string, params.new_string, 1)
+            new_content = old_content.replace(actual_old, new_string, 1)
             replace_count = 1
 
-        if new_content == old_content:
-            return ToolResult.error_result(
-                "No change made - old_string equals new_string"
-            )
-
         try:
-            path.write_text(new_content, encoding="utf-8")
+            to_write = new_content.replace("\n", "\r\n") if uses_crlf else new_content
+            path.write_text(to_write, encoding="utf-8", newline="")
         except IOError as e:
             return ToolResult.error_result(f"failed to write file: {e}")
 
-        # Re-record read-state to the post-edit content (CC: readFileState.set
-        # after a write) so a follow-up edit in the same turn doesn't trip the
-        # freshness check on our own change.
         from tools.builtin.shared.readFileState import record_read
         record_read(path, new_content)
 
@@ -185,35 +233,3 @@ class FileEditTool(Tool):
                 "line_diff": line_diff,
             },
         )
-
-    def _no_match_error(self, old_string: str, content: str, path: Path) -> ToolResult:
-        lines = content.splitlines()
-
-        partial_matches = []
-        search_terms = old_string.split()[:5]
-
-        if search_terms:
-            first_term = search_terms[0]
-            for i, line in enumerate(lines, 1):
-                if first_term in line:
-                    partial_matches.append((i, line.strip()[:80]))
-                    if len(partial_matches) >= 3:
-                        break
-
-        error_msg = f"old_string not found in {path}."
-
-        if partial_matches:
-            error_msg += "\n\nPossible similar lines:"
-            for line_num, line_preview in partial_matches:
-                error_msg += f"\n  Line {line_num}: {line_preview}"
-            error_msg += "\n\nMake sure old_string matches exactly (including whitespace and indentation)."
-        else:
-            error_msg += (
-                " Make sure the text matches exactly, including:\n"
-                "- All whitespace and indentation\n"
-                "- Line breaks\n"
-                "- Any invisible characters\n"
-                "Try re-reading the file using read_file tool and then editing."
-            )
-
-        return ToolResult.error_result(error_msg)

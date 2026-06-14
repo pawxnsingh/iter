@@ -1,15 +1,9 @@
 """
-Agent (subagent) tool prompt — verbatim from Claude Code
-src/tools/AgentTool/prompt.ts (getPrompt), rendered for our config:
-  - isCoordinator=False
-  - forkEnabled=False
-  - listViaAttachment=False (agent list inline)
-  - getSubscriptionType() != 'pro' (concurrency note included)
-  - USER_TYPE != 'ant' (no `isolation: "remote"` line)
-  - isInProcessTeammate()=False, isTeammate()=False
-  - hasEmbeddedSearchTools()=False (we have Glob/Grep)
+Agent (subagent) tool prompt, rendered for this configuration: inline agent
+list, concurrency note included, no fork/coordinator/teammate variants, and
+Glob/Grep available as dedicated tools.
 
-Tool name constants substituted statically. ${AGENT_TOOL_NAME}, etc.
+Tool name constants substituted statically.
 
 `render_agent_prompt(agent_lines)` builds the final string with the runtime
 agent list. AGENT_PROMPT is the static module-level value computed from
@@ -20,27 +14,23 @@ from tools.builtin.AgentTool.built_in_types import AgentDefinition
 
 
 def format_agent_line(agent: AgentDefinition) -> str:
-    """Mirrors Claude Code's formatAgentLine().
+    """Mirrors the formatAgentLine.
 
     Format: `- type: whenToUse (Tools: ...)`
     """
     if agent.tools and len(agent.tools) > 0 and agent.disallowed_tools:
-        # Both defined: filter allowlist by denylist
         deny_set = set(agent.disallowed_tools)
         effective = [t for t in agent.tools if t not in deny_set]
         tools_desc = ", ".join(effective) if effective else "None"
     elif agent.tools and len(agent.tools) > 0:
-        # Allowlist only
         tools_desc = ", ".join(agent.tools)
     elif agent.disallowed_tools:
-        # Denylist only
         tools_desc = f"All tools except {', '.join(agent.disallowed_tools)}"
     else:
         tools_desc = "All tools"
     return f"- {agent.agent_type}: {agent.when_to_use} (Tools: {tools_desc})"
 
 
-# Verbatim from CC's currentExamples
 CURRENT_EXAMPLES = """Example usage:
 
 <example_agent_descriptions>
@@ -76,7 +66,6 @@ assistant: "I'm going to use the Agent tool to launch the greeting-responder age
 """
 
 
-# Verbatim from CC's writingThePromptSection (non-fork variant)
 WRITING_THE_PROMPT_SECTION = """
 
 ## Writing the prompt
@@ -94,7 +83,6 @@ Terse command-style prompts produce shallow, generic work.
 """
 
 
-# Verbatim from CC's whenNotToUseSection (embedded=False variant, fork=False)
 WHEN_NOT_TO_USE_SECTION = """
 When NOT to use the Agent tool:
 - If you want to read a specific file path, use the Read tool or the Glob tool instead of the Agent tool, to find the match more quickly
@@ -105,7 +93,7 @@ When NOT to use the Agent tool:
 
 
 def build_shared(agent_list_section: str) -> str:
-    """Mirrors CC's `shared` template."""
+    """Mirrors the `shared` template."""
     return f"""Launch a new agent to handle complex, multi-step tasks autonomously.
 
 The Agent tool launches specialized agents (subprocesses) that autonomously handle complex tasks. Each agent type has specific capabilities and tools available to it.
@@ -115,17 +103,15 @@ The Agent tool launches specialized agents (subprocesses) that autonomously hand
 When using the Agent tool, specify a subagent_type parameter to select which agent type to use. If omitted, the general-purpose agent is used."""
 
 
-# Concurrency note (gated on subscription != 'pro' in CC, always on for us)
 CONCURRENCY_NOTE = "\n- Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses"
 
-# Background note (gated on !CLAUDE_CODE_DISABLE_BACKGROUND_TASKS && !isInProcessTeammate && !forkEnabled)
 BACKGROUND_NOTE = """
 - You can optionally run agents in the background using the run_in_background parameter. When an agent runs in the background, you will be automatically notified when it completes — do NOT sleep, poll, or proactively check on its progress. Continue with other work or respond to the user instead.
 - **Foreground vs background**: Use foreground (default) when you need the agent's results before you can proceed — e.g., research agents whose findings inform your next steps. Use background when you have genuinely independent work to do in parallel."""
 
 
 def render_agent_prompt(agent_definitions: list[AgentDefinition]) -> str:
-    """Mirrors CC's getPrompt() — non-coordinator, non-fork variant."""
+    """Mirrors the getPrompt — non-coordinator, non-fork variant."""
     agent_lines = [format_agent_line(a) for a in agent_definitions]
     agent_list_section = (
         "Available agent types and the tools they have access to:\n"
@@ -151,9 +137,6 @@ Usage notes:
 {CURRENT_EXAMPLES}"""
 
 
-# Compute the static AGENT_PROMPT at import time using the live BUILT_IN_AGENTS.
-# Lazy import to break cycle: built_in/__init__.py imports built_in_types from
-# here's sibling, so we import inside the function call.
 def _build_static_prompt() -> str:
     from tools.builtin.AgentTool.built_in import BUILT_IN_AGENTS
     return render_agent_prompt(list(BUILT_IN_AGENTS.values()))

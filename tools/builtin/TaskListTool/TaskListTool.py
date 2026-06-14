@@ -1,7 +1,7 @@
 """
 TaskList tool — list active tasks.
 
-Source: Claude Code src/tools/TaskListTool/
+Source: src/tools/TaskListTool/
 """
 
 from __future__ import annotations

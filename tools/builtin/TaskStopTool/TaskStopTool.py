@@ -1,7 +1,7 @@
 """
 TaskStop tool — stop/cancel a running task.
 
-Source: Claude Code src/tools/TaskStopTool/
+Source: src/tools/TaskStopTool/
 """
 
 from __future__ import annotations

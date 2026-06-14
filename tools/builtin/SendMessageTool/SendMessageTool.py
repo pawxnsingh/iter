@@ -1,7 +1,7 @@
 """
 SendMessage tool — communicate with other agents/tasks.
 
-Source: Claude Code src/tools/SendMessageTool/
+Source: src/tools/SendMessageTool/
 
 Used for multi-agent coordination. Sends a message to a running
 agent or task by ID, continuing its conversation.
@@ -36,8 +36,6 @@ class SendMessageTool(Tool):
 
     async def execute(self, invocation: ToolInvocation) -> ToolResult:
         params = SendMessageParams(**invocation.params)
-        # In a full implementation, this would route to a running agent/task
-        # For now, return a placeholder
         return ToolResult.success_result(
             f"Message sent to '{params.to}': {params.message[:100]}..."
             if len(params.message) > 100

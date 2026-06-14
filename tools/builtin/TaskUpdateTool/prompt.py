@@ -1,6 +1,5 @@
 """
-TaskUpdateTool prompt — verbatim from Claude Code
-src/tools/TaskUpdateTool/prompt.ts (PROMPT).
+TaskUpdateTool prompt.
 """
 
 DESCRIPTION = "Update a task in the task list"

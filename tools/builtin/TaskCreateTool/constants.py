@@ -1,3 +1,3 @@
-"""Mirrors Claude Code src/tools/TaskCreateTool/constants.ts."""
+"""TaskCreate tool constants."""
 
 TASK_CREATE_TOOL_NAME = "TaskCreate"

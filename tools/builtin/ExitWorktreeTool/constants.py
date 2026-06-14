@@ -1,3 +1,3 @@
-"""Mirrors Claude Code src/tools/ExitWorktreeTool/constants.ts."""
+"""ExitWorktree tool constants."""
 
 EXIT_WORKTREE_TOOL_NAME = "ExitWorktree"

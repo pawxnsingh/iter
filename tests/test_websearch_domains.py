@@ -1,4 +1,4 @@
-"""WebSearch CC parity: allowed_domains / blocked_domains filtering + min query length."""
+"""WebSearch parity: allowed_domains / blocked_domains filtering + min query length."""
 import pytest
 from pydantic import ValidationError
 
@@ -30,4 +30,4 @@ def test_schema_has_domain_fields_and_min_length():
     p = WebSearchParams(query="hi", allowed_domains=["example.com"], blocked_domains=["evil.com"])
     assert p.allowed_domains == ["example.com"] and p.blocked_domains == ["evil.com"]
     with pytest.raises(ValidationError):
-        WebSearchParams(query="h")  # below min_length 2
+        WebSearchParams(query="h")

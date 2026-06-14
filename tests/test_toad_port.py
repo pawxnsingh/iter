@@ -32,9 +32,6 @@ if str(ROOT) not in sys.path:
 os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test")
 
 
-# ─── Harness ───────────────────────────────────────────────────────────
-
-
 class _Harness:
     @staticmethod
     def make_app(widget):
@@ -65,11 +62,6 @@ async def _wait_for_agent(conv, pilot, timeout: float = 3.0) -> None:
         await pilot.pause(0.05)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# condense_path  (format_path module was removed — its tests went with it)
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def test_condense_path_shorter_than_width() -> None:
     from ui.widgets.condensed_path import condense_path
 
@@ -81,19 +73,14 @@ def test_condense_path_middle_ellipsis() -> None:
 
     out = condense_path("a/b/c/d/e/f/g.py", 10)
     assert "…" in out
-    assert "g.py" in out  # tail preserved
+    assert "g.py" in out
 
 
 def test_radiate_range_grows_outward() -> None:
     from ui.widgets.condensed_path import radiate_range
 
     pairs = list(radiate_range(5))
-    assert (2, 2) == pairs[0]  # starts at center
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# StrikeText
-# ═══════════════════════════════════════════════════════════════════════════
+    assert (2, 2) == pairs[0]
 
 
 @pytest.mark.asyncio
@@ -112,11 +99,6 @@ async def test_strike_text_renders_and_animates() -> None:
         assert s.strike_time is not None
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Welcome
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 @pytest.mark.asyncio
 async def test_welcome_mounts_logo_and_markdown() -> None:
     from textual.widgets import Label, Markdown
@@ -130,11 +112,6 @@ async def test_welcome_mounts_logo_and_markdown() -> None:
         assert w.query_one(Markdown, None) is not None
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Note  (markdown_note was removed as dead code)
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 @pytest.mark.asyncio
 async def test_note_implements_menu_protocol() -> None:
     from ui.protocols import MenuProtocol
@@ -142,14 +119,8 @@ async def test_note_implements_menu_protocol() -> None:
 
     n = Note("boom")
     assert isinstance(n, MenuProtocol)
-    # Empty menu is OK
     assert list(n.get_block_menu()) == []
     assert n.get_block_content("clipboard") is not None
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# AgentInfo / StatusLine
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.asyncio
@@ -182,11 +153,6 @@ async def test_status_line_format_from_token_stats() -> None:
         assert "1,234" in s.status
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# CondensedPath widget
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 @pytest.mark.asyncio
 async def test_condensed_path_widget_renders(tmp_path: Path) -> None:
     from ui.widgets.condensed_path import CondensedPath
@@ -195,12 +161,7 @@ async def test_condensed_path_widget_renders(tmp_path: Path) -> None:
     app = _Harness.make_app(cp)
     async with app.run_test(size=(40, 3)) as pilot:
         await pilot.pause()
-        assert cp.display_path  # populated by watch_path → on_resize
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# AgentThought
-# ═══════════════════════════════════════════════════════════════════════════
+        assert cp.display_path
 
 
 @pytest.mark.asyncio
@@ -218,11 +179,6 @@ async def test_agent_thought_streaming() -> None:
         assert t._stream is not None
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# HighlightedTextArea
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 @pytest.mark.asyncio
 async def test_highlighted_textarea_markdown_mode() -> None:
     from ui.widgets.highlighted_textarea import HighlightedTextArea
@@ -232,7 +188,7 @@ async def test_highlighted_textarea_markdown_mode() -> None:
     async with app.run_test(size=(60, 10)) as pilot:
         await pilot.pause()
         lines = ta.highlight_lines
-        assert lines  # markdown parsed into at least one content line
+        assert lines
 
 
 @pytest.mark.asyncio
@@ -257,12 +213,7 @@ async def test_highlighted_textarea_slash_command_styling() -> None:
     async with app.run_test(size=(60, 5)) as pilot:
         await pilot.pause()
         lines = ta.highlight_lines
-        assert len(lines) == 1  # single-line slash goes down special path
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# SideBar
-# ═══════════════════════════════════════════════════════════════════════════
+        assert len(lines) == 1
 
 
 @pytest.mark.asyncio
@@ -281,11 +232,6 @@ async def test_sidebar_composes_panels() -> None:
         assert len(collapsibles) == 2
         assert any(c.has_class("-flex") for c in collapsibles)
         assert any(c.has_class("-fixed") for c in collapsibles)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Plan
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.asyncio
@@ -314,7 +260,6 @@ async def test_plan_set_todos_strikes_newly_completed() -> None:
         await pilot.pause()
         assert p.entries and len(p.entries) == 2
 
-        # Mark task A completed — should be in newly_completed
         p.set_todos([
             {"content": "task A", "status": "completed", "priority": "high"},
             {"content": "task B", "status": "pending", "priority": "medium"},
@@ -341,11 +286,6 @@ async def test_plan_all_complete_class() -> None:
         assert p.has_class("-all-complete")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# ProjectDirectoryTree
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 @pytest.mark.asyncio
 async def test_project_directory_tree_filters_noise(tmp_path: Path) -> None:
     from ui.widgets.project_directory_tree import ProjectDirectoryTree
@@ -365,11 +305,6 @@ async def test_project_directory_tree_filters_noise(tmp_path: Path) -> None:
     assert "keep.py" in names
     assert "__pycache__" not in names
     assert ".git" not in names
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Conversation — welcome dismissal
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.asyncio
@@ -413,11 +348,6 @@ async def test_welcome_dismissed_on_first_user_input() -> None:
         assert not list(conv.query(Welcome))
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# MainScreen sidebar binding
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 @pytest.mark.asyncio
 async def test_ctrl_b_focuses_sidebar() -> None:
     from config.config import Config
@@ -428,7 +358,6 @@ async def test_ctrl_b_focuses_sidebar() -> None:
     async with app.run_test(size=(140, 40)) as pilot:
         await pilot.pause()
         sidebar = app.query_one(SideBar)
-        # Start: sidebar has no focus within
         assert not sidebar.has_focus_within
         await pilot.press("ctrl+b")
         for _ in range(20):
@@ -436,11 +365,6 @@ async def test_ctrl_b_focuses_sidebar() -> None:
             if sidebar.has_focus_within:
                 break
         assert sidebar.has_focus_within
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Prompt info bar — AgentInfo + CondensedPath + StatusLine
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.asyncio
@@ -459,14 +383,9 @@ async def test_prompt_info_bar_has_model_and_path() -> None:
         ai = prompt.query_one(AgentInfo)
         cp = prompt.query_one(CondensedPath)
         sl = prompt.query_one(StatusLine)
-        assert "?" not in ai.model_name or len(ai.model_name) > 1  # populated
+        assert "?" not in ai.model_name or len(ai.model_name) > 1
         assert cp.path == str(ROOT)
         assert sl is not None
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Block cursor navigation
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.asyncio
@@ -483,7 +402,6 @@ async def test_block_cursor_up_moves_to_last_block() -> None:
         conv = app.query_one(Conversation)
         await _wait_for_agent(conv, pilot)
 
-        # Mount a couple of blocks
         conv.post_message(UserInputSubmitted(body="hi"))
         for _ in range(20):
             await pilot.pause(0.02)
@@ -495,7 +413,6 @@ async def test_block_cursor_up_moves_to_last_block() -> None:
             if conv._current_response is not None:
                 break
 
-        # No cursor yet; Alt+Up should land on the last block
         assert conv._cursor_block is None
         conv.action_cursor_up()
         assert conv._cursor_block is not None

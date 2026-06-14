@@ -1,7 +1,7 @@
 """
 ToolSearch — search for and discover available tools.
 
-Source: Claude Code src/tools/ToolSearchTool/
+Source: src/tools/ToolSearchTool/
 
 When there are many tools (MCP servers, plugins), not all tool schemas
 are sent to the model. ToolSearch lets the model discover tools by
@@ -48,8 +48,6 @@ class ToolSearchTool(Tool):
         all_tools = [tool_cls(self.config) for tool_cls in get_all_builtin_tools()]
         raw = params.query.strip()
 
-        # "select:Read,Edit" → fetch those exact tools' full schemas (CC parity:
-        # direct selection returns callable schema definitions).
         if raw.lower().startswith("select:"):
             wanted = {n.strip().lower() for n in raw[len("select:"):].split(",") if n.strip()}
             selected = [t for t in all_tools if t.name.lower() in wanted]
@@ -59,8 +57,6 @@ class ToolSearchTool(Tool):
                 )
             return ToolResult.success_result(self._format_schemas(selected))
 
-        # keyword search → return matched tools' full schemas (CC yields the
-        # matched tools' definitions, not just descriptions).
         query = raw.lower()
         matches = [
             t for t in all_tools
@@ -75,7 +71,7 @@ class ToolSearchTool(Tool):
 
     def _format_schemas(self, tools: list) -> str:
         """Return full schema definitions so the model can call the tools
-        (CC parity: ToolSearch yields the matched tools' definitions)."""
+."""
         import json as _json
 
         blocks = []

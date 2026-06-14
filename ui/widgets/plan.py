@@ -126,7 +126,6 @@ class Plan(containers.Grid):
             case _:
                 return Content("   ")
 
-    # ─── Public API for callers (e.g. TodoWrite → Plan bridge) ─────────
 
     def set_todos(self, todos: list[dict[str, Any]]) -> None:
         """Replace entries from a list of `{content, status, priority}` dicts."""

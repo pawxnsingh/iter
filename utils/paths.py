@@ -14,6 +14,27 @@ def ensure_parent_directory(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
+def find_git_root(start_path: str | Path) -> Path | None:
+    """Walk UP from start_path looking for a `.git` (dir OR file — worktrees use a
+    .git file) at each level until the filesystem root. Returns the repo root, or
+    None if not inside a git repo.
+
+    getIsGit → findGitRoot walks up; a single-level
+    `(cwd/.git).exists()` check wrongly reports false when launched from a
+    subdirectory of a repo.
+    """
+    try:
+        current = Path(start_path).resolve()
+    except OSError:
+        return None
+    while True:
+        if (current / ".git").exists():
+            return current
+        if current == current.parent:
+            return None
+        current = current.parent
+
+
 def is_binary(path: str | Path) -> bool:
     try:
         with open(path, "rb") as f:

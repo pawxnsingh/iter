@@ -36,7 +36,7 @@ def test_match_prefix():
 def test_match_wildcard():
     assert match_rule("git *", "git add")
     assert match_rule("git *", "git commit -m 'msg'")
-    assert match_rule("git *", "git")  # trailing ` *` is optional
+    assert match_rule("git *", "git")
     assert not match_rule("git *", "gitk")
 
 

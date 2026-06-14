@@ -1,4 +1,4 @@
-"""WebFetch CC parity: requires url+prompt, SSRF blocks internal hosts."""
+"""WebFetch parity: requires url+prompt, SSRF blocks internal hosts."""
 import asyncio
 import tempfile
 from pathlib import Path
@@ -17,8 +17,7 @@ def _run(coro):
 
 def test_schema_requires_prompt():
     with pytest.raises(ValidationError):
-        WebFetchParams(url="https://example.com")  # no prompt
-    # url+prompt valid
+        WebFetchParams(url="https://example.com")
     p = WebFetchParams(url="https://example.com", prompt="summarize")
     assert p.prompt == "summarize"
 

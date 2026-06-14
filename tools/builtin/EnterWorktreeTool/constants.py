@@ -1,3 +1,3 @@
-"""Mirrors Claude Code src/tools/EnterWorktreeTool/constants.ts."""
+"""EnterWorktree tool constants."""
 
 ENTER_WORKTREE_TOOL_NAME = "EnterWorktree"

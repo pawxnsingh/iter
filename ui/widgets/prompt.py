@@ -60,13 +60,10 @@ class PromptTextArea(HighlightedTextArea):
         self.insert("\n")
 
     def on_key(self, event: events.Key) -> None:
-        # '/' on an empty prompt opens the slash overlay
         if event.character == "/" and self.text == "":
             event.stop()
             event.prevent_default()
             self.post_message(InvokeSlashComplete(query=""))
-        # '@' anywhere opens the fuzzy file picker; the literal '@' still
-        # gets typed so the user can type more or escape to keep just '@'.
         elif event.character == "@":
             self.post_message(InvokePathSearch(query=""))
 
@@ -181,7 +178,6 @@ class Prompt(VerticalGroup):
             ta = self.query_one(PromptTextArea)
         except Exception:
             return
-        # Replace any trailing "@" that triggered the picker with the path
         text = ta.text
         if text.endswith("@"):
             ta.text = text[:-1] + event.path

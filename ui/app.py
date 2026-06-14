@@ -21,7 +21,6 @@ from config.config import Config
 from ui.screens.main import MainScreen
 
 
-# Same Dracula palette toad uses for ANSI rendering inside terminal widgets.
 DRACULA_TERMINAL_THEME = terminal_theme.TerminalTheme(
     background=(40, 42, 54),
     foreground=(248, 248, 242),

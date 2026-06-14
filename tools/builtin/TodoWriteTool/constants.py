@@ -1,3 +1,3 @@
-"""Mirrors Claude Code src/tools/TodoWriteTool/constants.ts."""
+"""TodoWrite tool constants."""
 
 TODO_WRITE_TOOL_NAME = "TodoWrite"

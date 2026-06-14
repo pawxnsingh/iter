@@ -135,7 +135,6 @@ class Conversation(VerticalGroup):
         self._cursor_block: Widget | None = None
         self._welcome: Welcome | None = None
 
-    # ─── Layout ───────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:
         yield Throbber(id="throbber")
@@ -147,7 +146,6 @@ class Conversation(VerticalGroup):
         await self._mount_block(self._welcome)
         self._run_agent_task()
 
-    # ─── Agent worker (long-lived) ────────────────────────────────────
 
     @work(exclusive=True, group="agent")
     async def _run_agent_task(self) -> None:
@@ -174,8 +172,6 @@ class Conversation(VerticalGroup):
         finally:
             self._agent_ready.set()
 
-    # A turn = one user message processed end-to-end, 
-    # regardless of how many LLM round-trips happen inside it.
     async def _run_one_turn(self, agent: Agent, message: str) -> None:
         self.post_message(AgentStarted())
         self._current_response = None
@@ -220,9 +216,8 @@ class Conversation(VerticalGroup):
             case AgentEventType.AGENT_ERROR:
                 self.post_message(AgentFailed(error=event.data.get("error", "unknown")))
             case _:
-                pass  # AGENT_START / AGENT_END handled by our own turn wrapper
+                pass
 
-    # ─── Permission flow ──────────────────────────────────────────────
 
     async def _permission_prompt(self, tool_name: str, message: str, is_destructive: bool) -> bool:
         """Push the fullscreen PermissionsScreen and convert its 4-way decision
@@ -260,7 +255,6 @@ class Conversation(VerticalGroup):
         except Exception:
             pass
 
-    # ─── Input & slash commands ───────────────────────────────────────
 
     @on(UserInputSubmitted)
     async def _on_user_submitted(self, event: UserInputSubmitted) -> None:
@@ -321,7 +315,6 @@ class Conversation(VerticalGroup):
         event.stop()
         await self._mount_block(Note(event.text))
 
-    # ─── Agent event handlers ─────────────────────────────────────────
 
     @on(AgentStarted)
     def _on_started(self, event: AgentStarted) -> None:
@@ -358,7 +351,6 @@ class Conversation(VerticalGroup):
     async def _on_tool_started(self, event: ToolStarted) -> None:
         event.stop()
         await self._dismiss_welcome_once()
-        # New tool call closes streaming blocks
         self._current_response = None
         self._current_thought = None
         widget = ToolCall(event.call_id, event.name, event.arguments)
@@ -390,12 +382,10 @@ class Conversation(VerticalGroup):
             duration=event.duration or 3.0,
         )
 
-    # ─── Reactive housekeeping ────────────────────────────────────────
 
     def watch_busy_count(self, count: int) -> None:
         self.query_one(Throbber).set_busy(count > 0)
 
-    # ─── Helpers ──────────────────────────────────────────────────────
 
     async def _mount_block(self, widget: Any) -> None:
         window = self.query_one(Window)
@@ -427,7 +417,6 @@ class Conversation(VerticalGroup):
             stats = self._agent.session.context_manager.get_token_stats()
         except Exception:
             return
-        # Walk up to MainScreen, find the Prompt, ask it to render the stats.
         try:
             from ui.widgets.prompt import Prompt
             from ui.widgets.status_line import StatusLine
@@ -436,7 +425,6 @@ class Conversation(VerticalGroup):
         except Exception:
             pass
 
-    # ─── Block cursor navigation ──────────────────────────────────────
 
     def _iter_blocks(self) -> list[Widget]:
         try:
@@ -479,20 +467,16 @@ class Conversation(VerticalGroup):
 
     def _focus_block(self, widget: Widget) -> None:
         self._cursor_block = widget
-        # Highlight the block by scrolling to it
         try:
             widget.scroll_visible(animate=False)
         except Exception:
             pass
-        # Try to focus — Markdown / Static children may not be focusable;
-        # that's fine, the cursor still tracks logically.
         try:
             if widget.can_focus:
                 widget.focus()
         except Exception:
             pass
 
-    # ─── Shutdown ─────────────────────────────────────────────────────
 
     async def on_unmount(self) -> None:
         await self._input_queue.put(None)

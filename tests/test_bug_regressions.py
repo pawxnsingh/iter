@@ -31,9 +31,6 @@ async def _wait_for_agent(conv, pilot, timeout: float = 3.0) -> None:
         await pilot.pause(0.05)
 
 
-# ─── Bug #1: '/' leaks into TextArea ───────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_slash_key_does_not_leak_into_prompt() -> None:
     """
@@ -58,7 +55,6 @@ async def test_slash_key_does_not_leak_into_prompt() -> None:
         assert ta.text == "", (
             f"'/' leaked into prompt after opening overlay: {ta.text!r}"
         )
-        # And the overlay should be visible
         assert app.query_one(Prompt).has_class("-show-slash-complete")
 
 
@@ -83,13 +79,8 @@ async def test_slash_key_ignored_when_prompt_not_empty() -> None:
 
         await pilot.press("/")
         await pilot.pause()
-        # Overlay must not have opened
         assert not app.query_one(Prompt).has_class("-show-slash-complete")
-        # Text area should now contain the '/' normally
         assert "/" in ta.text
-
-
-# ─── Bug #2: re-posting Messages ───────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -111,9 +102,6 @@ async def test_main_screen_forwards_user_input_to_conversation() -> None:
         conv = app.query_one(Conversation)
         await _wait_for_agent(conv, pilot)
 
-        # Post to the Screen as Prompt would, bubbling up. MainScreen's
-        # forward handler should rehydrate a new message and post it to
-        # the Conversation.
         app.screen.post_message(UserInputSubmitted(body="hello there", shell=False))
         for _ in range(30):
             await pilot.pause(0.05)
@@ -153,9 +141,6 @@ async def test_main_screen_forwards_slash_chosen_to_conversation() -> None:
         )
 
 
-# ─── Bug #3: hang when agent fails to start ────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_slash_command_does_not_hang_when_agent_absent() -> None:
     """
@@ -176,8 +161,6 @@ async def test_slash_command_does_not_hang_when_agent_absent() -> None:
         await pilot.pause()
         conv = app.query_one(Conversation)
 
-        # Force the "agent never became ready" scenario: mark the event
-        # as set (so we don't wait), but leave _agent as None.
         conv._agent = None
         conv._agent_ready.set()
 

@@ -35,7 +35,7 @@ def test_filed_read_returns_image_attachment():
         assert r.success
         assert len(r.images) == 1
         assert r.images[0]["media_type"] == "image/png"
-        assert r.images[0]["data"]  # base64 present
+        assert r.images[0]["data"]
         assert r.metadata.get("image") is True
 
 

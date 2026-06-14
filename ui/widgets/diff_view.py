@@ -103,7 +103,6 @@ def _split_hunks(
     def flush() -> None:
         nonlocal left, right
         if left or right:
-            # Pad to equal length with empty context lines
             max_len = max(len(left), len(right))
             while len(left) < max_len:
                 left.append(DiffLine("context", "", None, None))
@@ -121,7 +120,7 @@ def _split_hunks(
             left.append(line)
         elif line.kind == "add":
             right.append(line)
-        else:  # context: appears on both sides, balanced
+        else:
             flush()
             pairs.append(([line], [line]))
     flush()
@@ -145,16 +144,13 @@ def _render_split_side(side: list[DiffLine], *, side_kind: Literal["left", "righ
             parts.append((ln, "$text-error 60%"))
             parts.append(("- ", "$text-error bold"))
             parts.append((line.text + "\n", "$text-error on $error 10%"))
-        else:  # context (or padding)
+        else:
             ln_val = (line.old_lineno if side_kind == "left" else line.new_lineno) or ""
             ln = f"{ln_val:>4} "
             parts.append((ln, "$text-muted"))
             parts.append(("  ",))
             parts.append((line.text + "\n", "$text-muted"))
     return Content.assemble(*[p for p in parts if isinstance(p, tuple) and len(p) >= 1])
-
-
-# ─── Widget ─────────────────────────────────────────────────────────────
 
 
 class DiffView(Vertical):
@@ -211,7 +207,6 @@ class DiffView(Vertical):
         self._path = path
         self._lines = parse_unified_diff(diff_text)
         self.set_reactive(DiffView.split, split)
-        # set_reactive bypasses watchers, so add the class explicitly here.
         if split:
             self.add_class("-split")
 
@@ -221,7 +216,6 @@ class DiffView(Vertical):
                 Content.assemble((f"⎯ {self._path}", "$text-secondary bold")),
                 id="diff-title",
             )
-        # Always compose both views; CSS controls visibility via .-split class
         with VerticalScroll(id="diff-scroll"):
             if self.split:
                 with Horizontal(id="diff-pane"):

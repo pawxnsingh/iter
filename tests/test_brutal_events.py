@@ -49,7 +49,6 @@ def test_agent_end_factory_with_usage() -> None:
     usage = TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
     e = AgentEvent.agent_end(response="ok", usage=usage)
     assert e.data["response"] == "ok"
-    # Usage is serialised via __dict__
     assert isinstance(e.data["usage"], dict)
     assert e.data["usage"].get("prompt_tokens") == 10
     assert e.data["usage"].get("completion_tokens") == 5
@@ -149,7 +148,6 @@ def test_tool_call_complete_factory_error_with_diff() -> None:
     assert e.data["success"] is False
     assert e.data["error"] == "bad"
     assert e.data["truncated"] is True
-    # Diff serialised to unified diff string
     assert isinstance(e.data["diff"], str)
     assert "---" in e.data["diff"] and "+++" in e.data["diff"]
 

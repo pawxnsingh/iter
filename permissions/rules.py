@@ -1,8 +1,6 @@
 """
 Permission rule matching — exact, prefix, and wildcard patterns.
 
-Source: Claude Code src/utils/permissions/shellRuleMatching.ts
-
 Three rule types (priority order):
   1. Exact match — literal string, no wildcards
   2. Prefix match — legacy `command:*` syntax
@@ -34,32 +32,26 @@ class ParsedRule:
 def parse_permission_rule(rule: str) -> ParsedRule:
     """
     Parse a permission rule into its type.
-    Claude Code: parsePermissionRule() in shellRuleMatching.ts
 
     Examples:
       "npm install"    → exact match
       "npm:*"          → prefix (matches npm install, npm run, etc.)
       "git *"          → wildcard (matches git add, git commit, etc.)
     """
-    # Legacy prefix syntax: "command:*"
     if rule.endswith(":*") and "\\" not in rule:
         return ParsedRule(
             type=RuleType.PREFIX,
-            pattern=rule[:-2],  # strip :*
+            pattern=rule[:-2],
             original=rule,
         )
 
-    # Check for unescaped * characters (wildcard)
-    # \* is escaped (literal), * is wildcard
-    unescaped_stars = re.findall(r'(?<!\\)\*', rule)
-    if unescaped_stars:
+    if _count_unescaped_stars(rule) > 0:
         return ParsedRule(
             type=RuleType.WILDCARD,
             pattern=rule,
             original=rule,
         )
 
-    # Plain exact match
     return ParsedRule(
         type=RuleType.EXACT,
         pattern=rule,
@@ -70,7 +62,6 @@ def parse_permission_rule(rule: str) -> ParsedRule:
 def match_rule(rule: str, value: str) -> bool:
     """
     Check if a value matches a permission rule.
-    Claude Code: matchWildcardPattern() in shellRuleMatching.ts
 
     Supports:
       - Exact: literal equality
@@ -92,40 +83,38 @@ def match_rule(rule: str, value: str) -> bool:
     return False
 
 
+_BS_PLACEHOLDER = "\x00__BS__\x00"
+_STAR_PLACEHOLDER = "\x00__STAR__\x00"
+
+
+def _to_placeholders(s: str) -> str:
+    """Fold `\\\\` (escaped backslash) and `\\*` (escaped star) to placeholders so
+    the remaining `*` are exactly the UNescaped wildcards. Order matters: `\\\\`
+    first, then `\\*`."""
+    return s.replace("\\\\", _BS_PLACEHOLDER).replace("\\*", _STAR_PLACEHOLDER)
+
+
+def _count_unescaped_stars(s: str) -> int:
+    return _to_placeholders(s).count("*")
+
+
 def _match_wildcard(pattern: str, value: str) -> bool:
     """
     Match a wildcard pattern against a value.
-    Claude Code: matchWildcardPattern() in shellRuleMatching.ts
+    technique): fold `\\\\`/`\\*` to placeholders, escape regex specials, turn the
+    remaining `*` into `.*`, then restore placeholders as literal `\\`/`*`.
 
-    * matches any sequence (including newlines)
-    \\* matches literal *
-    Trailing ` *` is made optional (so "git *" matches bare "git")
+    * matches any sequence (including newlines); \\* = literal *; \\\\ = literal \\.
+    Trailing ` *` is made optional (so "git *" matches bare "git").
     """
-    # Build regex char by char, handling \* escape
-    regex_parts = []
-    i = 0
-    while i < len(pattern):
-        if i < len(pattern) - 1 and pattern[i] == '\\' and pattern[i + 1] == '*':
-            # Escaped star → literal *
-            regex_parts.append(re.escape('*'))
-            i += 2
-        elif pattern[i] == '*':
-            # Unescaped star → match anything
-            regex_parts.append('.*')
-            i += 1
-        else:
-            regex_parts.append(re.escape(pattern[i]))
-            i += 1
+    processed = _to_placeholders(pattern)
+    escaped = re.sub(r"""[.+?^${}()|\[\]\\'"]""", lambda m: "\\" + m.group(0), processed)
+    with_wildcards = escaped.replace("*", ".*")
+    regex = with_wildcards.replace(_STAR_PLACEHOLDER, r"\*").replace(_BS_PLACEHOLDER, r"\\")
 
-    regex = ''.join(regex_parts)
-
-    # Claude Code: trailing ` *` (space + wildcard) is made optional
-    # so "git *" matches both "git add" AND bare "git"
-    # Note: re.escape(' ') produces '\\ ' so we check for escaped space
-    if regex.endswith('\\ .*'):
-        regex = regex[:-4] + '( .*)?'
-    elif regex.endswith(' .*'):
-        regex = regex[:-3] + '( .*)?'
+    unescaped_star_count = processed.count("*")
+    if regex.endswith(" .*") and unescaped_star_count == 1:
+        regex = regex[:-3] + "( .*)?"
 
     try:
         return bool(re.fullmatch(regex, value, re.DOTALL))
@@ -135,12 +124,11 @@ def _match_wildcard(pattern: str, value: str) -> bool:
 
 @dataclass(frozen=True)
 class PermissionRuleValue:
-    """Parsed CC rule string: `{toolName, ruleContent?}`.
+    """Parsed rule string: `{toolName, ruleContent?}`.
 
-    Claude Code: src/utils/permissions/permissionRuleParser.ts
         permissionRuleValueFromString('Bash')              → {toolName: 'Bash'}
         permissionRuleValueFromString('Bash(npm install)') → {toolName: 'Bash', ruleContent: 'npm install'}
-        permissionRuleValueFromString('Read(./src/*)')     → {toolName: 'Read', ruleContent: './src/*'}
+        permissionRuleValueFromString('Read') → {toolName: 'Read', ruleContent: './src/*'}
     """
     tool_name: str
     rule_content: str | None = None
@@ -167,14 +155,14 @@ def _find_last_unescaped(s: str, ch: str) -> int:
 
 
 def _unescape_rule_content(content: str) -> str:
-    """Reverse of CC's escapeRuleContent. Order matters: parens first, then \\."""
+    """Reverse of the escapeRuleContent. Order matters: parens first, then \\."""
     return content.replace("\\(", "(").replace("\\)", ")").replace("\\\\", "\\")
 
 
 def parse_permission_rule_string(rule_string: str) -> PermissionRuleValue:
-    """Parse a CC settings.json rule like `Bash(npm install)`.
+    """Parse a settings.json rule like `Bash(npm install)`.
 
-    Mirrors CC's permissionRuleValueFromString() exactly:
+    Mirrors the permissionRuleValueFromString exactly:
       - No '(' present → just tool name
       - '(' present but ')' missing/misplaced → treat whole string as tool name
       - Empty content '()' or `(*)` → tool name only (tool-wide rule)
@@ -206,9 +194,9 @@ def parse_permission_rule_string(rule_string: str) -> PermissionRuleValue:
 
 
 def parse_rule_strings_to_dict(rules: list[str]) -> dict[str, list[str]]:
-    """Convert a CC-style list of rule strings into our internal dict format.
+    """Convert a -style list of rule strings into our internal dict format.
 
-    Used by config loading to bridge settings.json (CC-shape) ↔ runtime
+    Used by config loading to bridge settings.json ↔ runtime
     `ToolPermissionContext` (our shape).
 
     Examples:
@@ -227,7 +215,6 @@ def parse_rule_strings_to_dict(rules: list[str]) -> dict[str, list[str]]:
             continue
         parsed = parse_permission_rule_string(raw)
         bucket = out.setdefault(parsed.tool_name, [])
-        # ruleContent=None means tool-wide rule → empty pattern in our format
         bucket.append(parsed.rule_content or "")
     return out
 
@@ -240,7 +227,7 @@ def match_rules_for_tool(
     """
     Find all rules that match a tool invocation.
 
-    Claude Code parity: rules dict is keyed by tool name; each value is a
+    rules dict is keyed by tool name; each value is a
     list of sub-patterns (rule "content") that match against the tool's
     permission value (BashTool → command, file tools → file_path, etc.).
 
@@ -258,17 +245,24 @@ def match_rules_for_tool(
       {"Read": ["./src/*"]}   → Read, "./src/x"   → ["./src/*"]
     """
     matched: list[str] = []
-    patterns = rules.get(tool_name)
-    if not patterns:
-        return matched
-    for pattern in patterns:
-        # Empty pattern → "any call to this tool"
-        if pattern == "" or pattern is None:
-            matched.append(pattern or "")
+
+    keys = [tool_name]
+    if tool_name.startswith("mcp__"):
+        parts = tool_name.split("__")
+        if len(parts) >= 3 and parts[1]:
+            keys.append(f"mcp__{parts[1]}")
+            keys.append(f"mcp__{parts[1]}__*")
+
+    for key in keys:
+        patterns = rules.get(key)
+        if not patterns:
             continue
-        # Sub-pattern requires the tool to expose a permission value
-        if permission_value is None:
-            continue
-        if match_rule(pattern, permission_value):
-            matched.append(pattern)
+        for pattern in patterns:
+            if pattern == "" or pattern is None:
+                matched.append(pattern or "")
+                continue
+            if permission_value is None:
+                continue
+            if match_rule(pattern, permission_value):
+                matched.append(pattern)
     return matched

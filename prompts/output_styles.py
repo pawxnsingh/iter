@@ -1,8 +1,6 @@
 """
 Output style configuration.
 
-Source: Claude Code src/outputStyles/loadOutputStylesDir.ts
-
 Users can define custom output styles in:
   - .ai-agent/output-styles/*.md
   - ~/.config/ai-agent/output-styles/*.md
@@ -31,17 +29,14 @@ class OutputStyle:
     name: str
     description: str
     prompt: str
-    source: str  # "user" or "project"
+    source: str
+    keep_coding_instructions: bool | None = None
 
 
 def load_output_styles(cwd: str) -> list[OutputStyle]:
-    """
-    Load output styles from user and project directories.
-    Claude Code: loadOutputStylesDir.ts
-    """
+    """Load output styles from user and project directories."""
     styles = []
 
-    # User styles
     user_dir = Path(user_config_dir("ai-agent")) / "output-styles"
     if user_dir.is_dir():
         for f in sorted(user_dir.glob("*.md")):
@@ -49,7 +44,6 @@ def load_output_styles(cwd: str) -> list[OutputStyle]:
             if style:
                 styles.append(style)
 
-    # Project styles (override user)
     project_dir = Path(cwd) / ".ai-agent" / "output-styles"
     if project_dir.is_dir():
         for f in sorted(project_dir.glob("*.md")):
@@ -67,7 +61,6 @@ def _parse_style_file(path: Path, source: str) -> OutputStyle | None:
     except Exception:
         return None
 
-    # Parse frontmatter
     if not content.startswith("---"):
         return OutputStyle(
             name=path.stem,
@@ -85,18 +78,23 @@ def _parse_style_file(path: Path, source: str) -> OutputStyle | None:
 
     name = path.stem
     description = ""
+    keep_coding_instructions: bool | None = None
 
     for line in frontmatter.split("\n"):
         if line.startswith("name:"):
             name = line.split(":", 1)[1].strip()
         elif line.startswith("description:"):
             description = line.split(":", 1)[1].strip()
+        elif line.startswith("keep-coding-instructions:"):
+            val = line.split(":", 1)[1].strip().lower()
+            keep_coding_instructions = val in ("true", "yes", "1", "on")
 
     return OutputStyle(
         name=name,
         description=description,
         prompt=body,
         source=source,
+        keep_coding_instructions=keep_coding_instructions,
     )
 
 

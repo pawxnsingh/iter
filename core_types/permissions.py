@@ -1,7 +1,5 @@
 """
-Permission types matching Claude Code's permission system.
-
-Claude Code source: src/types/permissions.ts
+Permission types matching the permission system.
 
 Permission modes control how tool execution is gated:
 - default: ask for writes, allow reads
@@ -27,19 +25,46 @@ class PermissionMode(str, Enum):
 
     @classmethod
     def _missing_(cls, value: object) -> "PermissionMode | None":
-        """Accept Claude Code's camelCase variants ('acceptEdits', 'dontAsk').
+        """Accept the camelCase variants ('acceptEdits', 'dontAsk').
 
-        CC settings.json uses 'acceptEdits' / 'dontAsk'. We canonicalize to
-        snake_case internally for Python idiom, but a CC config file should
+        settings.json uses 'acceptEdits' / 'dontAsk'. We canonicalize to
+        snake_case internally for Python idiom, but a config file should
         Just Work without renaming.
         """
         if not isinstance(value, str):
             return None
         alias = {
             "acceptEdits": cls.ACCEPT_EDITS,
+            "bypassPermissions": cls.BYPASS,
             "dontAsk": cls.DONT_ASK,
         }
         return alias.get(value)
+
+    @property
+    def external_name(self) -> str:
+        """The camelCase mode string exposed externally (hook payloads, API
+        surface). Our snake_case internal value differs, and str(enum) leaks the
+        Python repr, so use this everywhere a mode is exposed externally."""
+        return {
+            PermissionMode.DEFAULT: "default",
+            PermissionMode.PLAN: "plan",
+            PermissionMode.ACCEPT_EDITS: "acceptEdits",
+            PermissionMode.BYPASS: "bypassPermissions",
+            PermissionMode.DONT_ASK: "dontAsk",
+        }.get(self, "default")
+
+
+def permission_mode_external(mode: object) -> str:
+    """External (camelCase) mode string for a value that may be a PermissionMode,
+    a raw string, or None — never leaks the Python enum repr."""
+    if isinstance(mode, PermissionMode):
+        return mode.external_name
+    if not mode:
+        return ""
+    try:
+        return PermissionMode(mode).external_name
+    except (ValueError, TypeError):
+        return str(mode)
 
 
 class PermissionBehavior(str, Enum):

@@ -24,7 +24,7 @@ async def _collect(chunks):
         for c in chunks:
             yield c
 
-    async def create(**kw):  # client code does `await create(...)`
+    async def create(**kw):
         return gen()
 
     client = LLMClient(Config())

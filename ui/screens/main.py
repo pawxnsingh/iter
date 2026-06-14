@@ -63,7 +63,6 @@ class MainScreen(Screen):
         yield prompt
         yield Footer()
 
-    # ─── Forward prompt input to the Conversation ─────────────────────
 
     @on(UserInputSubmitted)
     def _forward_input(self, event: UserInputSubmitted) -> None:
@@ -92,7 +91,6 @@ class MainScreen(Screen):
         except Exception:
             pass
 
-    # ─── Actions ──────────────────────────────────────────────────────
 
     def action_abort(self) -> None:
         try:
@@ -133,8 +131,6 @@ class MainScreen(Screen):
         chosen = await self.app.push_screen_wait(SessionResumeModal(sessions))
         if not chosen:
             return
-        # Replay /resume <id> through our existing slash-command handler so we
-        # don't duplicate the load logic that already lives in commands/.
         sid = chosen.get("session_id", "")
         if sid:
             self.query_one(Conversation).post_message(

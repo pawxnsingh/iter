@@ -1,6 +1,5 @@
 """
-TaskStopTool prompt — verbatim from Claude Code
-src/tools/TaskStopTool/prompt.ts.
+TaskStopTool prompt.
 """
 
 TASK_STOP_TOOL_NAME = "TaskStop"

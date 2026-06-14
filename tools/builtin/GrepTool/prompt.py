@@ -1,9 +1,8 @@
-"""
-Grep tool prompt — verbatim from Claude Code src/tools/GrepTool/prompt.ts
-getDescription().
-"""
+"""Grep tool prompt."""
 
-GREP_PROMPT = """Usage:
+GREP_PROMPT = """A powerful search tool built on ripgrep
+
+  Usage:
   - ALWAYS use Grep for search tasks. NEVER invoke `grep` or `rg` as a Bash command. The Grep tool has been optimized for correct permissions and access.
   - Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+")
   - Filter files with glob parameter (e.g., "*.js", "**/*.tsx") or type parameter (e.g., "js", "py", "rust")

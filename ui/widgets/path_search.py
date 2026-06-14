@@ -28,7 +28,6 @@ from ui.fuzzy_index import FuzzyIndex
 from ui.messages import Dismiss, InsertPath
 
 
-# Filenames / dirs we never include in the picker
 _HIDDEN = {
     ".git", ".hg", ".svn",
     ".venv", "venv", "__pycache__",
@@ -128,7 +127,6 @@ class PathSearch(VerticalGroup):
     def on_mount(self) -> None:
         self._refresh_paths()
 
-    # ─── Show / hide (CSS class on parent Prompt) ─────────────────────
 
     def open(self) -> None:
         self._toggle_parent("-show-path-search", True)
@@ -149,7 +147,6 @@ class PathSearch(VerticalGroup):
         if node is not None:
             node.set_class(on, cls)
 
-    # ─── Path scan + index update ─────────────────────────────────────
 
     @work(exclusive=True, group="path-scan")
     async def _refresh_paths(self) -> None:
@@ -179,7 +176,6 @@ class PathSearch(VerticalGroup):
             lst.add_options(options)
             lst.highlighted = 0
 
-    # ─── Search ───────────────────────────────────────────────────────
 
     @on(Input.Changed, "#path-input")
     async def _on_input_changed(self, event: Input.Changed) -> None:
@@ -200,7 +196,6 @@ class PathSearch(VerticalGroup):
         offsets_by_path = {p: o for _, o, p in top}
         self._render_options([p for _, _, p in top], offsets_by_path)
 
-    # ─── Actions ──────────────────────────────────────────────────────
 
     def action_cursor_up(self) -> None:
         try:

@@ -2,7 +2,7 @@
 
 Regression: resuming a transcript ending with an assistant tool_call that has
 no following tool result leaves an orphan tool_call; the next model API call
-rejects it ('tool_call without tool_result'). CC: filterIncompleteToolCalls.
+rejects it ('tool_call without tool_result'). filterIncompleteToolCalls.
 """
 import asyncio
 import tempfile
@@ -31,7 +31,6 @@ def test_resume_drops_unanswered_tool_calls():
                 {"id": "c2", "type": "function", "function": {"name": "Read", "arguments": "{}"}},
             ], turn=2)
             sess.save_message(role="tool", content="file content", tool_call_id="c1", turn=2)
-            # c2 never answered (interrupted)
 
             metas = SessionStorage.list_sessions(str(cwd))
             sess2 = Session(cfg); await sess2.initialize()
@@ -42,7 +41,7 @@ def test_resume_drops_unanswered_tool_calls():
             all_calls = [tc.get("id") for m in msgs if m.role == "assistant" and m.tool_calls
                          for tc in m.tool_calls]
             orphans = [c for c in all_calls if c not in tool_ids]
-            assert orphans == []        # no unanswered tool_calls remain
-            assert "c1" in all_calls     # the answered call is preserved
+            assert orphans == []
+            assert "c1" in all_calls
 
     _run(go())

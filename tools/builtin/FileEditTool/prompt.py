@@ -1,10 +1,11 @@
 """
-Edit tool prompt — verbatim from Claude Code src/tools/FileEditTool/prompt.ts
-getDefaultEditDescription(). Default prefix format = "line number + tab"
-(compact line prefix enabled, matches our Read output).
+Edit tool prompt. Default prefix format = "line number + tab" (compact line
+prefix enabled, matching our Read output).
 """
 
-EDIT_PROMPT = """Usage:
+EDIT_PROMPT = """Performs exact string replacements in files.
+
+Usage:
 - You must use your `Read` tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.
 - When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: line number + tab. Everything after that is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.
 - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.

@@ -1,8 +1,4 @@
-"""
-TaskListTool prompt — derived from Claude Code
-src/tools/TaskListTool/prompt.ts getPrompt() (without the
-isAgentSwarmsEnabled() teammate sections we don't have).
-"""
+"""TaskList tool prompt (teammate sections omitted — no swarm support)."""
 
 DESCRIPTION = "List all tasks in the task list"
 

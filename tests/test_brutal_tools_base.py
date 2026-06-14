@@ -16,11 +16,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# ToolResult
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def test_tool_result_success_factory() -> None:
     from tools.base import ToolResult
 
@@ -66,11 +61,6 @@ def test_tool_result_to_model_output_error_format() -> None:
     assert "ERROR: bad" in out
     assert "OUTPUT:" in out
     assert "stderr" in out
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# FileDiff
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 def test_filediff_normal_changes() -> None:
@@ -123,7 +113,6 @@ def test_filediff_no_trailing_newline_handled() -> None:
         old_content="no newline",
         new_content="still no newline",
     )
-    # Should not crash; should produce a diff with the two lines
     out = d.to_diff()
     assert "-no newline" in out
     assert "+still no newline" in out
@@ -138,14 +127,8 @@ def test_filediff_identical_produces_empty() -> None:
         new_content="same\n",
     )
     out = d.to_diff()
-    # Unified diff produces empty output for identical files
     assert "+" not in out.replace("+++", "")
     assert "-" not in out.replace("---", "")
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Tool — validation & schema
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class _DummySchema(BaseModel):
@@ -185,7 +168,7 @@ def test_tool_validate_pydantic_accepts_good_params(tmp_path: Path) -> None:
 
 def test_tool_validate_pydantic_rejects_missing_required(tmp_path: Path) -> None:
     tool = _make_tool(_DummySchema, tmp_path)
-    errors = tool.validate_param({})  # missing path
+    errors = tool.validate_param({})
     assert errors
     assert any("path" in e for e in errors)
 
@@ -219,12 +202,9 @@ def test_tool_to_openai_schema_from_dict(tmp_path: Path) -> None:
 
 
 def test_tool_to_openai_schema_invalid_raises(tmp_path: Path) -> None:
-    tool = _make_tool(object(), tmp_path)  # not BaseModel or dict
+    tool = _make_tool(object(), tmp_path)
     with pytest.raises(ValueError):
         tool.to_openai_schema()
-
-
-# ─── Kind-based mutation defaults ──────────────────────────────────────────
 
 
 def test_tool_is_mutating_by_kind(tmp_path: Path) -> None:

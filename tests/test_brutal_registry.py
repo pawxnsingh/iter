@@ -15,9 +15,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-# ─── Test fixtures ─────────────────────────────────────────────────────────
-
-
 def _mk_config(tmp_path: Path, allowed: list[str] | None = None):
     from config.config import Config
 
@@ -31,7 +28,7 @@ def _mk_echo_tool(config):
         name = "Echo"
         description = "Echoes its input"
         kind = ToolKind.READ
-        max_result_size_chars = 50  # small, to exercise truncation
+        max_result_size_chars = 50
 
         @property
         def schema(self):
@@ -54,7 +51,7 @@ def _mk_bigoutput_tool(config):
         name = "Big"
         description = "Returns huge output"
         kind = ToolKind.READ
-        max_result_size_chars = 20  # cap at 20 chars
+        max_result_size_chars = 20
 
         @property
         def schema(self):
@@ -81,9 +78,6 @@ def _mk_crash_tool(config):
             raise RuntimeError("intentional")
 
     return CrashTool(config)
-
-
-# ─── Registration ──────────────────────────────────────────────────────────
 
 
 def test_registry_empty_by_default(tmp_path: Path) -> None:
@@ -113,7 +107,7 @@ def test_registry_replace_on_reregister(tmp_path: Path, caplog) -> None:
     t1 = _mk_echo_tool(cfg)
     t2 = _mk_echo_tool(cfg)
     r.register(t1)
-    r.register(t2)  # second call should replace
+    r.register(t2)
     assert r.get("Echo") is t2
 
 
@@ -159,9 +153,6 @@ def test_registry_get_schemas(tmp_path: Path) -> None:
     assert len(schemas) == 1
     assert schemas[0]["name"] == "Echo"
     assert schemas[0]["parameters"]["type"] == "object"
-
-
-# ─── Invocation ────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -238,11 +229,7 @@ async def test_registry_enforces_max_result_size(tmp_path: Path) -> None:
     result = await r.invoke("Big", {}, cwd=tmp_path)
     assert result.success is True
     assert result.truncated is True
-    # max_result_size_chars=20, plus the truncation suffix
     assert len(result.output) <= 20 + len("\n... [output truncated]") + 5
-
-
-# ─── Default registry wiring ──────────────────────────────────────────────
 
 
 def test_default_registry_has_builtin_tools(tmp_path: Path) -> None:
@@ -251,6 +238,5 @@ def test_default_registry_has_builtin_tools(tmp_path: Path) -> None:
     r = create_default_registry(_mk_config(tmp_path))
     names = [t.name for t in r.get_tools()]
     assert len(names) > 0
-    # Should have the core builtin tools (subset check)
     for expected in ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]:
         assert expected in names, f"missing core tool: {expected}"

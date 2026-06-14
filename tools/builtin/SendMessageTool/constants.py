@@ -1,3 +1,3 @@
-"""Mirrors Claude Code src/tools/SendMessageTool/constants.ts."""
+"""SendMessage tool constants."""
 
 SEND_MESSAGE_TOOL_NAME = "SendMessage"

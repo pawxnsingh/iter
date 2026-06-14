@@ -58,14 +58,12 @@ def _truncate_by_lines(text: str, target_tokens: int, suffix: str, model: str) -
         current_tokens += line_tokens
 
     if not result_lines:
-        # Fall back to character truncation if no complete lines fit
         return _truncate_by_chars(text, target_tokens, suffix, model)
 
     return "\n".join(result_lines) + suffix
 
 
 def _truncate_by_chars(text: str, target_tokens: int, suffix: str, model: str) -> str:
-    # Binary search for the right length
     low, high = 0, len(text)
 
     while low < high:

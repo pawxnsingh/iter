@@ -1,9 +1,7 @@
 """
 Settings validation with graceful degradation.
 
-Source: Claude Code src/utils/settings/validation.ts
-
-Claude Code principle: Invalid settings are logged but IGNORED.
+principle: Invalid settings are logged but IGNORED.
 The system never crashes on bad config — it uses defaults instead.
 """
 
@@ -23,24 +21,21 @@ def validate_settings(settings: dict[str, Any]) -> list[str]:
     """
     Validate settings and return list of warnings.
     Invalid settings are NOT removed — they're just reported.
-    Claude Code: graceful degradation pattern.
+    graceful degradation pattern.
     """
     warnings = []
 
-    # Validate permission mode
     perms = settings.get("permissions", {})
     if isinstance(perms, dict):
         mode = perms.get("defaultMode")
         if mode and mode not in VALID_PERMISSION_MODES:
             warnings.append(f"Invalid permission mode '{mode}'. Valid: {VALID_PERMISSION_MODES}")
 
-        # Validate permission rules
         for behavior in ["allow", "deny", "ask"]:
             rules = perms.get(behavior, [])
             if not isinstance(rules, list):
                 warnings.append(f"permissions.{behavior} must be a list, got {type(rules).__name__}")
 
-    # Validate hooks
     hooks = settings.get("hooks", {})
     if isinstance(hooks, dict):
         for event, hook_list in hooks.items():
@@ -59,12 +54,10 @@ def validate_settings(settings: dict[str, Any]) -> list[str]:
                 if hook_type == "http" and not hook.get("url"):
                     warnings.append(f"hooks.{event}[{i}] http hook missing 'url'")
 
-    # Validate model
     model = settings.get("model")
     if model is not None and not isinstance(model, str):
         warnings.append(f"model must be a string, got {type(model).__name__}")
 
-    # Validate maxTurns
     max_turns = settings.get("maxTurns")
     if max_turns is not None:
         if not isinstance(max_turns, int) or max_turns < 1:

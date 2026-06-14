@@ -1,13 +1,14 @@
 """
 NotebookEdit tool — edit Jupyter notebook cells.
 
-Source: Claude Code src/tools/NotebookEditTool/
+Source: src/tools/NotebookEditTool/
 
 Replaces the contents of a specific cell in a .ipynb file.
 Supports: replace, insert, delete operations.
 """
 
 import json
+import re
 
 from pydantic import BaseModel, Field
 
@@ -22,8 +23,8 @@ from utils.paths import resolve_path
 class NotebookEditParams(BaseModel):
     """
     Cell identification: either `cell_number` (int, 0-based) per the verbatim
-    CC prompt, OR `cell_id` (str, matches `cells[i].id`) per CC's actual
-    schema. CC's prompt and schema disagree; we accept both. If both are
+    prompt, OR `cell_id` (str, matches `cells[i].id`) per the actual
+    schema. the prompt and schema disagree; we accept both. If both are
     supplied, `cell_number` wins (matches the prompt). If `cell_id` is given
     and the notebook has cell IDs, we resolve to the matching index.
     """
@@ -51,7 +52,10 @@ class NotebookEditParams(BaseModel):
             for i, cell in enumerate(cells):
                 if cell.get("id") == self.cell_id:
                     return i
-            return -1  # sentinel: cell_id given but not found
+            m = re.fullmatch(r"cell-(\d+)", self.cell_id)
+            if m:
+                return int(m.group(1))
+            return -1
         return None
 
 
@@ -72,59 +76,90 @@ class NotebookEditTool(Tool):
         if not path.suffix == ".ipynb":
             return ToolResult.error_result("File must be a .ipynb notebook")
 
+        from tools.builtin.shared.readFileState import check_freshness
+        stale = check_freshness(path, None)
+        if stale:
+            return ToolResult.error_result(stale)
+
         try:
-            notebook = json.loads(path.read_text(encoding="utf-8"))
+            raw = path.read_text(encoding="utf-8")
+            notebook = json.loads(raw)
         except (json.JSONDecodeError, OSError) as e:
             return ToolResult.error_result(f"Failed to read notebook: {e}")
 
         cells = notebook.get("cells", [])
 
-        # Resolve cell identifier (accepts CC's cell_id or our cell_number)
         idx = params.resolve_index(cells)
         if idx is None:
-            return ToolResult.error_result(
-                "Either cell_number or cell_id must be provided"
-            )
-        if idx == -1:
+            if params.edit_mode == "insert":
+                idx = 0
+            else:
+                return ToolResult.error_result(
+                    "Either cell_number or cell_id must be provided"
+                )
+        elif idx == -1:
             return ToolResult.error_result(
                 f"Cell ID {params.cell_id!r} not found in notebook"
             )
-        if idx >= len(cells) and params.edit_mode != "insert":
+        elif params.edit_mode == "insert":
+            idx += 1
+
+        edit_mode = params.edit_mode
+        cell_type = params.cell_type
+        if edit_mode == "replace" and idx == len(cells):
+            edit_mode = "insert"
+
+        if edit_mode != "insert" and not (0 <= idx < len(cells)):
             return ToolResult.error_result(
                 f"Cell {idx} does not exist (notebook has {len(cells)} cells)"
             )
 
-        if params.edit_mode == "delete":
+        if edit_mode == "delete":
             cells.pop(idx)
             notebook["cells"] = cells
-            path.write_text(json.dumps(notebook, indent=1), encoding="utf-8")
+            self._write(path, notebook)
             return ToolResult.success_result(f"Deleted cell {idx} from {path.name}")
 
-        elif params.edit_mode == "insert":
-            new_cell = {
-                "cell_type": params.cell_type,
-                "source": params.new_source.split("\n"),
+        elif edit_mode == "insert":
+            new_cell: dict = {
+                "cell_type": cell_type,
+                "source": params.new_source,
                 "metadata": {},
             }
-            if params.cell_type == "code":
-                new_cell["outputs"] = []
+            if cell_type == "code":
                 new_cell["execution_count"] = None
+                new_cell["outputs"] = []
+
+            nbformat = notebook.get("nbformat", 4)
+            nbformat_minor = notebook.get("nbformat_minor", 0)
+            if nbformat > 4 or (nbformat == 4 and nbformat_minor >= 5):
+                import random
+                import string
+                new_cell["id"] = "".join(
+                    random.choices(string.ascii_lowercase + string.digits, k=13)
+                )
 
             cells.insert(idx, new_cell)
             notebook["cells"] = cells
-            path.write_text(json.dumps(notebook, indent=1), encoding="utf-8")
+            self._write(path, notebook)
             return ToolResult.success_result(
-                f"Inserted {params.cell_type} cell at position {idx} in {path.name}"
+                f"Inserted {cell_type} cell at position {idx} in {path.name}"
             )
 
-        else:  # replace
-            old_source = "".join(cells[idx].get("source", []))
-            cells[idx]["source"] = params.new_source.split("\n")
-            if params.cell_type:
-                cells[idx]["cell_type"] = params.cell_type
+        else:
+            target = cells[idx]
+            old_source = target.get("source", "")
+            if isinstance(old_source, list):
+                old_source = "".join(old_source)
+            target["source"] = params.new_source
+            if target.get("cell_type") == "code":
+                target["execution_count"] = None
+                target["outputs"] = []
+            if cell_type and cell_type != target.get("cell_type"):
+                target["cell_type"] = cell_type
 
             notebook["cells"] = cells
-            path.write_text(json.dumps(notebook, indent=1), encoding="utf-8")
+            self._write(path, notebook)
             return ToolResult.success_result(
                 f"Replaced cell {idx} in {path.name}",
                 metadata={
@@ -132,3 +167,13 @@ class NotebookEditTool(Tool):
                     "new_source": params.new_source,
                 },
             )
+
+    @staticmethod
+    def _write(path, notebook: dict) -> None:
+        """Serialize + write the notebook, then refresh readFileState so a
+        follow-up edit in the same session isn't blocked by our own mtime bump
+."""
+        from tools.builtin.shared.readFileState import record_read
+        serialized = json.dumps(notebook, indent=1)
+        path.write_text(serialized, encoding="utf-8")
+        record_read(path, serialized)

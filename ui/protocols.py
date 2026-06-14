@@ -16,8 +16,6 @@ from typing import Iterable, Protocol, runtime_checkable
 from textual.widget import Widget
 
 
-# Placeholder for MenuItem — toad uses its own menus.py; we keep the
-# shape simple so we can grow the context-menu system later.
 MenuItem = object
 
 

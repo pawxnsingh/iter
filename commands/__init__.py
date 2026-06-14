@@ -1,7 +1,7 @@
 """
 Slash command system.
 
-Source: Claude Code src/commands/ (80+ command directories)
+Source: src/commands/ (80+ command directories)
 
 Commands are registered with a decorator and dispatched by name.
 The TUI intercepts lines starting with '/' and routes them here.
@@ -12,12 +12,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-# Global command registry
 _COMMANDS: dict[str, SlashCommand] = {}
 
 
-# Friendly error messages used by `require_context` when a needed key
-# is missing from the runtime context dict.
 _CTX_MISSING_MESSAGES = {
     "context_manager": "No context manager.",
     "session": "No session active.",
@@ -94,7 +91,7 @@ async def execute_slash_command(text: str, context: dict[str, Any]) -> str | Non
     Returns the response string, or None if unknown.
     """
     parts = text.strip().split(maxsplit=1)
-    cmd_name = parts[0][1:]  # Remove leading /
+    cmd_name = parts[0][1:]
     args = parts[1] if len(parts) > 1 else ""
 
     cmd = _COMMANDS.get(cmd_name)
@@ -110,9 +107,6 @@ async def execute_slash_command(text: str, context: dict[str, Any]) -> str | Non
             return cmd.handler(args, context)
     except Exception as e:
         return f"Command error: {e}"
-
-
-# ── Helpers ─────────────────────────────────────────────────────────
 
 
 async def _run_git(*args: str, merge_stderr: bool = False) -> tuple[int, str, str]:
@@ -141,8 +135,6 @@ async def _run_git(*args: str, merge_stderr: bool = False) -> tuple[int, str, st
         (stderr.decode(errors="replace").strip() if stderr is not None else ""),
     )
 
-
-# ── Register built-in commands ──────────────────────────────────────
 
 @register_command("help", "Show available commands")
 def cmd_help(args: str, ctx: dict) -> str:
@@ -333,7 +325,6 @@ def cmd_doctor(args: str, ctx: dict) -> str:
     import os
     lines = ["Diagnostics:", ""]
 
-    # Check providers
     has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY"))
     has_openai = bool(os.environ.get("OPENAI_API_KEY"))
     has_azure = bool(os.environ.get("AZURE_OPENAI_API_KEY"))
@@ -346,22 +337,19 @@ def cmd_doctor(args: str, ctx: dict) -> str:
         lines.append("  !! No LLM provider configured.")
         lines.append("  Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or AZURE_OPENAI_API_KEY")
 
-    # Check config
     if "config" in ctx:
         config = ctx["config"]
         lines.append(f"  Model:           {config.model_name}")
         lines.append(f"  CWD exists:      {'yes' if config.cwd.exists() else 'NO'}")
         lines.append(f"  Permission mode: {config.permission_mode}")
 
-    # Check tools
     if "session" in ctx:
         tools = ctx["session"].tool_registry.get_tools()
         lines.append(f"  Tools loaded:    {len(tools)}")
 
-    # Check git
-    from pathlib import Path
+    from utils.paths import find_git_root
     if "config" in ctx:
-        is_git = (Path(ctx["config"].cwd) / ".git").exists()
+        is_git = find_git_root(ctx["config"].cwd) is not None
         lines.append(f"  Git repo:        {'yes' if is_git else 'no'}")
 
     return "\n".join(lines)
@@ -380,8 +368,6 @@ def cmd_debug(args: str, ctx: dict) -> str:
 
 @register_command("fast", "Toggle fast mode (shorter responses)")
 def cmd_fast(args: str, ctx: dict) -> str:
-    # In Claude Code, /fast toggles faster output (same model)
-    # We can simulate this by adjusting temperature or instructions
     return "Fast mode is controlled by the model. Use /model to switch to a faster model."
 
 
@@ -451,7 +437,6 @@ async def cmd_log(args: str, ctx: dict) -> str:
 @require_context("context_manager")
 def cmd_undo(args: str, ctx: dict) -> str:
     cm = ctx["context_manager"]
-    # Remove messages from the last turn (assistant + tool results)
     removed = 0
     while cm._messages and cm._messages[-1].role in ("assistant", "tool"):
         cm._messages.pop()
@@ -465,7 +450,6 @@ def cmd_undo(args: str, ctx: dict) -> str:
 @require_context("context_manager")
 def cmd_retry(args: str, ctx: dict) -> str:
     cm = ctx["context_manager"]
-    # Find the last user message
     last_user = None
     for msg in reversed(cm._messages):
         if msg.role == "user":
@@ -473,12 +457,11 @@ def cmd_retry(args: str, ctx: dict) -> str:
             break
     if not last_user:
         return "No previous message to retry."
-    # Remove everything after (and including) the last user message
     while cm._messages and cm._messages[-1].role != "user":
         cm._messages.pop()
     if cm._messages:
-        cm._messages.pop()  # Remove the user message too
-    return f"__RETRY__:{last_user}"  # Signal to re-process
+        cm._messages.pop()
+    return f"__RETRY__:{last_user}"
 
 
 @register_command("mcp", "Show MCP server status")
@@ -487,7 +470,6 @@ def cmd_mcp(args: str, ctx: dict) -> str:
     mcp = ctx["session"].mcp_manager
     if not mcp.config.mcp_servers:
         return "No MCP servers configured."
-    # Live runtime status (connection state + tool counts) keyed by server name.
     live = {s["name"]: s for s in mcp.get_all_servers()}
     lines = ["MCP Servers:", ""]
     for name, server_config in mcp.config.mcp_servers.items():
@@ -526,7 +508,6 @@ def cmd_files(args: str, ctx: dict) -> str:
     paths = set()
     for msg in cm._messages:
         if msg.role == "tool" and msg.tool_call_id:
-            # Find corresponding assistant tool call
             pass
         if msg.role == "assistant" and msg.tool_calls:
             for tc in msg.tool_calls:
@@ -550,7 +531,6 @@ def cmd_files(args: str, ctx: dict) -> str:
 @register_command("env", "Show environment variables (filtered)")
 def cmd_env(args: str, ctx: dict) -> str:
     import os
-    # Show non-sensitive env vars
     skip = {"KEY", "SECRET", "TOKEN", "PASSWORD", "CREDENTIAL"}
     lines = ["Environment (sensitive values hidden):", ""]
     for k, v in sorted(os.environ.items()):
@@ -577,7 +557,7 @@ def cmd_providers(args: str, ctx: dict) -> str:
     import os
     lines = ["LLM Providers:", ""]
     providers = [
-        ("Anthropic (Claude)", "ANTHROPIC_API_KEY"),
+        ("Anthropic", "ANTHROPIC_API_KEY"),
         ("OpenAI", "OPENAI_API_KEY"),
         ("Azure OpenAI", "AZURE_OPENAI_API_KEY"),
     ]
@@ -631,7 +611,6 @@ def cmd_agents(args: str, ctx: dict) -> str:
 @register_command("tasks", "Show current task list")
 @require_context("session")
 def cmd_tasks(args: str, ctx: dict) -> str:
-    # Find TodoWrite tool instance
     tool = ctx["session"].tool_registry.get("TodoWrite")
     if not tool or not hasattr(tool, 'get_todos'):
         return "No task tracking tool available."
@@ -663,7 +642,6 @@ async def cmd_export_md(args: str, ctx: dict) -> str:
     if not path.exists():
         return "No transcript yet."
     md = export_session_to_markdown(path)
-    # Save to file
     export_path = path.with_suffix(".md")
     export_path.write_text(md, encoding="utf-8")
     return f"Exported to: {export_path}"
@@ -718,7 +696,6 @@ def cmd_resume(args: str, ctx: dict) -> str:
     if not sessions:
         return "No previous sessions found."
 
-    # If user provided a number, resume that session
     if args.strip():
         try:
             idx = int(args.strip()) - 1
@@ -728,13 +705,11 @@ def cmd_resume(args: str, ctx: dict) -> str:
             else:
                 return f"Invalid session number. Use 1-{len(sessions)}"
         except ValueError:
-            # Search by session ID prefix
             for s in sessions:
                 if s.session_id.startswith(args.strip()):
                     return _do_resume(s, ctx)
             return f"No session matching '{args.strip()}'"
 
-    # List available sessions
     lines = ["Previous sessions (use /resume <number> to restore):", ""]
     for i, s in enumerate(sessions[:10]):
         lines.append(f"  {i+1}. {s.session_id[:8]}... | {s.updated_at[:19]} | {s.turn_count} turns | {s.message_count} msgs")
@@ -763,27 +738,38 @@ def _do_resume(session_meta, ctx: dict) -> str:
     if not messages:
         return "Transcript is empty."
 
-    # Load messages into context manager
     context_manager = ctx.get("context_manager")
     if not context_manager:
         return "No context manager available."
 
     context_manager.clear()
 
-    # Which tool_call ids actually have a persisted tool result? Assistant
-    # tool_calls without a matching result are "incomplete" (the session was
-    # interrupted mid-execution). Replaying them verbatim would leave an orphan
-    # tool_call, and the next model API call rejects an assistant tool_call that
-    # has no following tool result. Filter them out on resume (CC parity:
-    # filterIncompleteToolCalls).
+    last_summary_idx = -1
+    for i, m in enumerate(messages):
+        if m.get("type") == "summary" and m.get("summary"):
+            last_summary_idx = i
+
+    loaded = 0
+    if last_summary_idx >= 0:
+        from services.compact.prompt import get_compact_user_summary_message
+        summary_msg = get_compact_user_summary_message(
+            messages[last_summary_idx].get("summary", ""),
+            suppress_follow_up_questions=True,
+            transcript_path=str(transcript_path),
+        )
+        context_manager.add_user_message(summary_msg)
+        loaded += 1
+        replay = messages[last_summary_idx + 1:]
+    else:
+        replay = messages
+
     answered_ids = {
         m.get("tool_call_id")
-        for m in messages
+        for m in replay
         if m.get("role") == "tool" and m.get("tool_call_id")
     }
 
-    loaded = 0
-    for msg in messages:
+    for msg in replay:
         role = msg.get("role", "")
         content = msg.get("content", "")
 
@@ -795,8 +781,6 @@ def _do_resume(session_meta, ctx: dict) -> str:
             kept_calls = [
                 tc for tc in tool_calls if tc.get("id") in answered_ids
             ]
-            # Skip an assistant message that was ONLY incomplete tool calls and
-            # carried no text — nothing left to replay.
             if tool_calls and not kept_calls and not (content or "").strip():
                 continue
             context_manager.add_assistant_message(
@@ -810,6 +794,15 @@ def _do_resume(session_meta, ctx: dict) -> str:
                 content=content,
             )
             loaded += 1
+
+    session = ctx.get("session")
+    if session is not None:
+        new_storage = SessionStorage(session_meta.session_id, session_meta.project_dir)
+        new_storage._last_uuid = next(
+            (m["uuid"] for m in reversed(messages) if m.get("uuid")), None
+        )
+        session.storage = new_storage
+        session.session_id = session_meta.session_id
 
     return (
         f"Resumed session {session_meta.session_id[:8]}...\n"

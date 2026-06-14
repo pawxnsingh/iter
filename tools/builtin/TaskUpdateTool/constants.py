@@ -1,3 +1,3 @@
-"""Mirrors Claude Code src/tools/TaskUpdateTool/constants.ts."""
+"""TaskUpdate tool constants."""
 
 TASK_UPDATE_TOOL_NAME = "TaskUpdate"

@@ -23,7 +23,7 @@ def test_child_cascading():
 
 def test_check_raises():
     ctrl = AbortController()
-    ctrl.check()  # should not raise
+    ctrl.check()
     ctrl.abort("test")
     with pytest.raises(AbortError):
         ctrl.check()
@@ -32,5 +32,5 @@ def test_check_raises():
 def test_double_abort():
     ctrl = AbortController()
     ctrl.abort("first")
-    ctrl.abort("second")  # should not error
-    assert ctrl.reason == "first"  # first reason preserved
+    ctrl.abort("second")
+    assert ctrl.reason == "first"

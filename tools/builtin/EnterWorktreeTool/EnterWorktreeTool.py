@@ -1,7 +1,7 @@
 """
 EnterWorktree tool — create an isolated git worktree and switch into it.
 
-Source: Claude Code src/tools/EnterWorktreeTool/
+Source: src/tools/EnterWorktreeTool/
 
 Creates a new git worktree inside .ai-agent/worktrees/, optionally with a
 caller-provided name, and switches the session's working directory to it.
@@ -22,11 +22,9 @@ from pydantic import BaseModel, Field
 from tools.base import Tool, ToolInvocation, ToolKind, ToolResult
 from tools.builtin.EnterWorktreeTool.prompt import ENTER_WORKTREE_TOOL_PROMPT
 
-# Per-session worktree state file (one active worktree at a time)
 _WORKTREE_STATE_REL = Path(".ai-agent") / "worktree_session.json"
 _WORKTREES_DIR_REL = Path(".ai-agent") / "worktrees"
 
-# Allowed worktree-slug shape (matches CC's validateWorktreeSlug)
 _SLUG_RE = re.compile(r"^[A-Za-z0-9._/-]{1,64}$")
 
 
@@ -66,7 +64,7 @@ def _validate_slug(name: str) -> None:
 
 
 def _generate_slug() -> str:
-    """Random short slug, matches CC's getPlanSlug() shape (3-word style)."""
+    """Random short slug, matches the getPlanSlug shape (3-word style)."""
     return secrets.token_hex(4)
 
 
@@ -107,40 +105,33 @@ class EnterWorktreeTool(Tool):
         params = EnterWorktreeParams(**invocation.params)
         cwd = invocation.cwd
 
-        # Refuse if already in a session-owned worktree
         if get_current_worktree_session(cwd):
             return ToolResult.error_result("Already in a worktree session")
 
-        # Validate slug, else generate one
         slug = params.name or _generate_slug()
         try:
             _validate_slug(slug)
         except ValueError as e:
             return ToolResult.error_result(str(e))
 
-        # Confirm we're in a git repo
         code, root_out, _ = await _run_git(["rev-parse", "--show-toplevel"], cwd)
         if code != 0:
             return ToolResult.error_result("Not inside a git repository")
         repo_root = Path(root_out.strip())
 
-        # Resolve target worktree path under repo_root/.ai-agent/worktrees/<slug>
         worktree_path = repo_root / _WORKTREES_DIR_REL / slug
         if worktree_path.exists():
             return ToolResult.error_result(f"Worktree path already exists: {worktree_path}")
 
-        # Branch name (prefix to avoid clobbering existing branches)
         branch = f"ai-agent-worktree/{slug}"
         worktree_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Create the worktree on a new branch from HEAD
         code, _, err = await _run_git(
             ["worktree", "add", "-b", branch, str(worktree_path), "HEAD"], repo_root,
         )
         if code != 0:
             return ToolResult.error_result(f"git worktree add failed: {err.strip()}")
 
-        # Persist session state (under repo_root, not the new worktree)
         state = {
             "slug": slug,
             "branch": branch,

@@ -1,6 +1,5 @@
 """
-Explore agent definition — verbatim from Claude Code
-src/tools/AgentTool/built-in/exploreAgent.ts.
+Explore agent definition.
 
 External-build variant: hasEmbeddedSearchTools() is False for us (we have
 Glob/Grep tools), so the embedded=false branches are taken. Tool name
@@ -13,7 +12,7 @@ EXPLORE_AGENT_MIN_QUERIES = 3
 
 
 def get_explore_system_prompt() -> str:
-    return """You are a file search specialist for Claude Code, Anthropic's official CLI for Claude. You excel at thoroughly navigating and exploring codebases.
+    return """You are a file search specialist for an interactive coding CLI. You excel at thoroughly navigating and exploring codebases.
 
 === CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===
 This is a READ-ONLY exploration task. You are STRICTLY PROHIBITED from:
@@ -62,7 +61,6 @@ EXPLORE_WHEN_TO_USE = (
 EXPLORE_AGENT = AgentDefinition(
     agent_type="Explore",
     when_to_use=EXPLORE_WHEN_TO_USE,
-    # Mirrors CC's disallowedTools list (write tools blocked for read-only mode)
     disallowed_tools=[
         "Agent",
         "ExitPlanMode",
@@ -70,9 +68,6 @@ EXPLORE_AGENT = AgentDefinition(
         "Write",
         "NotebookEdit",
     ],
-    # CC: external users get 'haiku' for speed; ant users 'inherit'
     model="haiku",
-    # Explore is a fast read-only search agent — doesn't need CLAUDE.md
-    omit_claude_md=True,
     system_prompt=get_explore_system_prompt,
 )

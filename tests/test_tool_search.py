@@ -1,4 +1,4 @@
-"""ToolSearch CC parity: select:<names> returns callable schemas; keyword search returns schemas."""
+"""ToolSearch parity: select:<names> returns callable schemas; keyword search returns schemas."""
 import asyncio
 import tempfile
 from pathlib import Path
@@ -22,7 +22,7 @@ def test_select_returns_schemas():
     assert r.success
     assert "<functions>" in r.output
     assert '"name": "Read"' in r.output and '"name": "Edit"' in r.output
-    assert "file_path" in r.output  # parameters present
+    assert "file_path" in r.output
 
 
 def test_select_unknown_errors():

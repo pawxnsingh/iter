@@ -1,4 +1,4 @@
-"""Full instruction hierarchy (CC CLAUDE.md tiers) reaches the system prompt.
+"""Full instruction hierarchy reaches the system prompt.
 
 Regression: load_all_instructions collected managed/user/parent/rules/local but
 only fired the InstructionsLoaded hook; only the single cwd AGENT.md reached the
@@ -27,11 +27,12 @@ def test_all_instruction_tiers_in_prompt():
             (sub / "AGENT.local.md").write_text("LOCAL_RULE: no print debugging")
             cfg = load_config(cwd=sub)
             async with Agent(cfg) as ag:
-                sp = ag.session.context_manager.system_prompt
-                assert "PARENT_RULE" in sp
-                assert "CWD_RULE" in sp
-                assert "RULE_FILE" in sp
-                assert "LOCAL_RULE" in sp
-                assert sp.count("use type hints") == 1  # no duplication
+                reminder = ag._user_context_reminder
+                assert "PARENT_RULE" in reminder
+                assert "CWD_RULE" in reminder
+                assert "RULE_FILE" in reminder
+                assert "LOCAL_RULE" in reminder
+                assert reminder.count("use type hints") == 1
+                assert "CWD_RULE" not in ag.session.context_manager.system_prompt
 
     _run(go())

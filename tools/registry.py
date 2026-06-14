@@ -94,9 +94,6 @@ class ToolRegistry:
                 metadata={"tool_name": name},
             )
 
-        # Enforce max result size — registry path has no call_id, so this
-        # falls back to plain truncation. Orchestration uses the same helper
-        # with a call_id to persist overflow to disk instead.
         return truncate_tool_result(result, tool)
 
     def get_schemas(self) -> list[dict[str, Any]]:

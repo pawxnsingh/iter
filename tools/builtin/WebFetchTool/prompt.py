@@ -1,5 +1,5 @@
 """
-WebFetch tool prompt — verbatim from Claude Code src/tools/WebFetchTool/prompt.ts
+WebFetch tool prompt.
 DESCRIPTION constant.
 """
 

@@ -1,7 +1,7 @@
 """
 Shared registry for background subagent results.
 
-Mirrors Claude Code's tools/shared/ pattern: state shared across tool
+Mirrors the tools/shared/ pattern: state shared across tool
 directories lives here, not duplicated. AgentTool (producer, _run_background)
 writes results keyed by task_id; AgentResultTool (consumer) reads them so the
 model can collect what a backgrounded subagent produced.
@@ -21,10 +21,9 @@ class BackgroundAgent:
     task_id: str
     agent_type: str
     task: asyncio.Task
-    result: str | None = None  # populated when the task completes
+    result: str | None = None
 
 
-# Global store, shared across tool instances.
 _agents: dict[str, BackgroundAgent] = {}
 
 

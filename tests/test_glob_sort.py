@@ -1,4 +1,4 @@
-"""Glob CC parity: results sorted by mtime, oldest first (rg --sort=modified)."""
+"""Glob parity: results sorted by mtime, oldest first (rg --sort=modified)."""
 import asyncio
 import tempfile
 import time

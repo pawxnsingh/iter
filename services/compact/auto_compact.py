@@ -1,12 +1,10 @@
 """
-Autocompact: Layer 3 of Claude Code's compaction system.
-
-Source: src/services/compact/autoCompact.ts
+Autocompact: Layer 3 of the compaction system.
 
 When the conversation token count exceeds a threshold, summarize the
 entire conversation via an API call and replace old messages with the summary.
 
-Constants (exact from Claude Code autoCompact.ts):
+Constants:
   AUTOCOMPACT_BUFFER_TOKENS = 13,000       (line 62)
   MAX_OUTPUT_TOKENS_FOR_SUMMARY = 20,000   (line 30)
   MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3 (line 70)
@@ -26,26 +24,23 @@ from utils.text import count_tokens
 
 logger = logging.getLogger(__name__)
 
-# ── Claude Code exact constants (autoCompact.ts lines 28-70) ──────────
 AUTOCOMPACT_BUFFER_TOKENS = 13_000
 WARNING_THRESHOLD_BUFFER_TOKENS = 20_000
 ERROR_THRESHOLD_BUFFER_TOKENS = 20_000
 MANUAL_COMPACT_BUFFER_TOKENS = 3_000
 MAX_OUTPUT_TOKENS_FOR_SUMMARY = 20_000
 MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3
-POST_COMPACT_KEEP_RECENT = 6
 
 
 @dataclass
 class AutoCompactTracking:
     """
     Tracks compaction state across query loop iterations.
-    Claude Code: AutoCompactTrackingState in autoCompact.ts line 51.
     """
     compacted: bool = False
     turn_counter: int = 0
     consecutive_failures: int = 0
-    turn_id: str = ""  # Unique ID per compact (for analytics)
+    turn_id: str = ""
 
 
 @dataclass
@@ -58,11 +53,9 @@ class CompactionResult:
     post_compact_tokens: int
 
 
-# ── Threshold calculation ──────────────────────────────────────────────
-
 def get_effective_context_window(context_window: int) -> int:
     """
-    Claude Code: contextWindow - min(maxOutputTokens, 20_000)
+    contextWindow - min(maxOutputTokens, 20_000)
     We reserve 20K tokens for the model's response during compaction.
     """
     return context_window - MAX_OUTPUT_TOKENS_FOR_SUMMARY
@@ -71,7 +64,6 @@ def get_effective_context_window(context_window: int) -> int:
 def get_auto_compact_threshold(context_window: int) -> int:
     """
     The token count at which autocompact fires.
-    Claude Code: getAutoCompactThreshold() in autoCompact.ts line 72.
     """
     return get_effective_context_window(context_window) - AUTOCOMPACT_BUFFER_TOKENS
 
@@ -79,7 +71,7 @@ def get_auto_compact_threshold(context_window: int) -> int:
 def get_blocking_limit(context_window: int) -> int:
     """
     Hard blocking limit. If tokens exceed this, generate synthetic 413 BEFORE calling API.
-    Claude Code: blockingLimit = actualContextWindow - MANUAL_COMPACT_BUFFER_TOKENS (3K)
+    blockingLimit = actualContextWindow - MANUAL_COMPACT_BUFFER_TOKENS (3K)
     Overridable via BLOCKING_LIMIT_OVERRIDE env var.
     """
     import os
@@ -94,7 +86,7 @@ def get_blocking_limit(context_window: int) -> int:
 @dataclass
 class TokenWarningState:
     """
-    Claude Code: calculateTokenWarningState() return type.
+    calculateTokenWarningState return type.
     Five-level warning system for context usage.
     """
     percent_left: int
@@ -110,11 +102,10 @@ def calculate_token_warning_state(
 ) -> TokenWarningState:
     """
     Calculate token warning states.
-    Claude Code: calculateTokenWarningState() in autoCompact.ts lines 93-145.
 
     Thresholds:
       - Warning: threshold - 20K
-      - Error: threshold - 20K (same as warning in Claude Code)
+      - Error: threshold - 20K
       - AutoCompact: threshold (effectiveWindow - 13K)
       - Blocking: effectiveWindow - 3K (hard limit, synthetic 413)
     """
@@ -136,12 +127,10 @@ def calculate_token_warning_state(
     )
 
 
-# ── Token estimation ──────────────────────────────────────────────────
-
 def estimate_messages_tokens(messages: list, model: str = "") -> int:
     """
     Estimate total token count for messages.
-    Claude Code pads by 4/3 to be conservative (microCompact.ts line 204).
+    pads by 4/3 to be conservative.
     """
     total = 0
     for msg in messages:
@@ -150,11 +139,23 @@ def estimate_messages_tokens(messages: list, model: str = "") -> int:
         else:
             total += count_tokens(msg.content, model)
 
-    # Pad by 4/3 to be conservative (Claude Code pattern)
     return int(total * 4 / 3)
 
 
-# ── Should compact check ──────────────────────────────────────────────
+def _is_auto_compact_enabled() -> bool:
+    """isAutoCompactEnabled: off when DISABLE_COMPACT
+    or DISABLE_AUTO_COMPACT is truthy ('1'/'true'/'yes'/'on')."""
+    import os
+
+    def truthy(v: str | None) -> bool:
+        return bool(v) and v.lower().strip() in ("1", "true", "yes", "on")
+
+    if truthy(os.environ.get("DISABLE_COMPACT")):
+        return False
+    if truthy(os.environ.get("DISABLE_AUTO_COMPACT")):
+        return False
+    return True
+
 
 def should_auto_compact(
     messages: list,
@@ -164,13 +165,15 @@ def should_auto_compact(
 ) -> bool:
     """
     Check if autocompact should trigger.
-    Claude Code: shouldAutoCompact() in autoCompact.ts line 160.
 
     Returns False if:
+      - Autocompact disabled via env
       - Circuit breaker tripped (>= 3 consecutive failures)
       - Token count under threshold
     """
-    # Circuit breaker (Claude Code line 260-264)
+    if not _is_auto_compact_enabled():
+        return False
+
     if tracking and tracking.consecutive_failures >= MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES:
         logger.warning(
             f"Autocompact circuit breaker: {tracking.consecutive_failures} "
@@ -189,8 +192,6 @@ def should_auto_compact(
     return token_count >= threshold
 
 
-# ── Main compaction function ──────────────────────────────────────────
-
 async def auto_compact_if_needed(
     messages: list,
     system_prompt: str,
@@ -198,11 +199,10 @@ async def auto_compact_if_needed(
     tracking: AutoCompactTracking | None,
     model: str,
     compact_fn: Callable[[list, str], Awaitable[str]],
+    transcript_path: str | None = None,
 ) -> CompactionResult | None:
     """
     If token count exceeds threshold, summarize conversation via API call.
-
-    Claude Code: autoCompactIfNeeded() in autoCompact.ts line 241.
 
     Args:
         messages: Current conversation messages
@@ -227,24 +227,17 @@ async def auto_compact_if_needed(
         f"Autocompact triggered: {pre_compact_tokens} tokens >= {threshold} threshold"
     )
 
-    # PreCompact hook (CC: executePreCompactHooks, trigger='auto'). May return
-    # custom instructions that get folded into the summarization prompt.
     custom_instructions = await _fire_pre_compact(trigger="auto")
 
     try:
-        # Call the LLM to generate a conversation summary. Pass PreCompact's
-        # custom instructions when the compact_fn accepts them (the injected
-        # create_compact_fn does; older 2-arg fns are tolerated).
         try:
             summary = await compact_fn(messages, system_prompt, custom_instructions)
         except TypeError:
             summary = await compact_fn(messages, system_prompt)
 
-        # PostCompact hook (CC: executePostCompactHooks) — receives the summary.
         await _fire_post_compact(trigger="auto", compact_summary=summary)
 
-        # Build post-compact messages: [summary] + last N messages
-        compacted = build_post_compact_messages(messages, summary)
+        compacted = build_post_compact_messages(messages, summary, transcript_path)
         post_compact_tokens = estimate_messages_tokens(compacted, model)
 
         logger.info(
@@ -258,14 +251,13 @@ async def auto_compact_if_needed(
             tracking=AutoCompactTracking(
                 compacted=True,
                 turn_counter=0,
-                consecutive_failures=0,  # Reset on success (Claude Code line 333)
+                consecutive_failures=0,
             ),
             pre_compact_tokens=pre_compact_tokens,
             post_compact_tokens=post_compact_tokens,
         )
 
     except Exception as e:
-        # Increment failure count for circuit breaker (Claude Code line 341)
         prev_failures = tracking.consecutive_failures if tracking else 0
         next_failures = prev_failures + 1
 
@@ -279,7 +271,7 @@ async def auto_compact_if_needed(
             )
 
         return CompactionResult(
-            messages=messages,  # Return unchanged messages
+            messages=messages,
             summary="",
             tracking=AutoCompactTracking(
                 compacted=False,
@@ -287,35 +279,66 @@ async def auto_compact_if_needed(
                 consecutive_failures=next_failures,
             ),
             pre_compact_tokens=pre_compact_tokens,
-            post_compact_tokens=pre_compact_tokens,  # No change
+            post_compact_tokens=pre_compact_tokens,
         )
 
 
-# ── Post-compact message building ────────────────────────────────────
+POST_COMPACT_TOKEN_BUDGET = 50_000
+POST_COMPACT_MAX_FILES = 5
+
+
+def _post_compact_file_attachments(token_budget: int = POST_COMPACT_TOKEN_BUDGET,
+                                   max_files: int = POST_COMPACT_MAX_FILES) -> list:
+    """createPostCompactFileAttachments: re-read the most
+    recently-read files (FRESH from disk) — up to max_files within token_budget —
+    so the model regains concrete file context after the raw tail is dropped."""
+    from pathlib import Path
+    from context.manager import MessageItem
+    from tools.builtin.shared import readFileState
+
+    items = sorted(
+        readFileState._state.items(), key=lambda kv: kv[1].timestamp, reverse=True
+    )[:max_files]
+    out: list = []
+    used = 0
+    for path, _rec in items:
+        try:
+            content = Path(path).read_text(encoding="utf-8")
+        except Exception:
+            continue
+        text = (
+            "<system-reminder>\n"
+            f"Contents of {path} (re-read after compaction):\n\n{content}\n"
+            "</system-reminder>"
+        )
+        tok = count_tokens(text)
+        if used + tok > token_budget:
+            continue
+        used += tok
+        out.append(MessageItem(role="user", content=text, token_count=tok))
+    return out
+
 
 def build_post_compact_messages(
     messages: list,
     summary: str,
+    transcript_path: str | None = None,
 ) -> list:
     """
     Build the message list after compaction.
 
-    Claude Code: buildPostCompactMessages() in compact.ts line 330.
+    No raw conversation tail is kept; recency is restored by re-reading recent
+    files rather than retaining raw turns — which also avoids dragging an
+    orphan tool_call/tool_result pair across the boundary.
 
-    Structure: [summary_message, ...last_N_messages]
-
-    Keeps the most recent messages so the model has immediate context.
-    Claude Code keeps attachments, hook results, and file snapshots too,
-    but we start with the core pattern: summary + recent messages.
+    Structure: [summary_message, ...re-read-recent-file attachments].
     """
     from services.compact.prompt import get_compact_user_summary_message
 
-    # Single source of truth for the resume message (CC: getCompactUserSummaryMessage).
     summary_content = get_compact_user_summary_message(
-        summary, suppress_follow_up_questions=True
+        summary, suppress_follow_up_questions=True, transcript_path=transcript_path
     )
 
-    # Import here to avoid circular import
     from context.manager import MessageItem
     summary_msg = MessageItem(
         role="user",
@@ -323,20 +346,21 @@ def build_post_compact_messages(
         token_count=count_tokens(summary_content),
     )
 
-    # Keep the most recent messages for context continuity
-    # Default: 6 messages (3 turns of user+assistant)
-    recent = messages[-POST_COMPACT_KEEP_RECENT:] if len(messages) > POST_COMPACT_KEEP_RECENT else []
+    attachments = _post_compact_file_attachments()
+    try:
+        from tools.builtin.shared import readFileState
+        readFileState.clear()
+    except Exception:
+        pass
 
-    return [summary_msg] + recent
+    return [summary_msg] + attachments
 
-
-# ── Compaction lifecycle hooks (CC parity) ───────────────────────────
 
 def _compact_hook_executor():
     """Build a HookExecutor from the frozen session snapshot, or None.
 
     Compaction runs deep in the context manager with no HookExecutor in scope,
-    so we read the module-global hooks snapshot — the same source CC's compact
+    so we read the module-global hooks snapshot — the same source the compact
     pipeline reaches for executePreCompactHooks/executePostCompactHooks.
     """
     from hooks.config import get_hooks_from_snapshot
@@ -349,7 +373,7 @@ def _compact_hook_executor():
 
 
 async def _fire_pre_compact(trigger: str) -> str | None:
-    """Fire PreCompact (CC: executePreCompactHooks). Returns custom instructions
+    """Fire PreCompact. Returns custom instructions
     a hook may supply to steer the summary, or None."""
     from core_types.hooks import HookEvent
 
@@ -361,7 +385,6 @@ async def _fire_pre_compact(trigger: str) -> str | None:
             event=HookEvent.PRE_COMPACT.value,
             data={"trigger": trigger, "custom_instructions": None},
         )
-        # A PreCompact hook returns instructions via stdout → additional_context.
         return result.additional_context or None
     except Exception:
         logger.debug("PreCompact hook failed", exc_info=True)
@@ -369,7 +392,7 @@ async def _fire_pre_compact(trigger: str) -> str | None:
 
 
 async def _fire_post_compact(trigger: str, compact_summary: str) -> None:
-    """Fire PostCompact (CC: executePostCompactHooks) with the produced summary."""
+    """Fire PostCompact with the produced summary."""
     from core_types.hooks import HookEvent
 
     executor = _compact_hook_executor()

@@ -20,9 +20,7 @@ def test_stream_options_requested_and_usage_captured():
     captured = {}
 
     async def gen():
-        # content chunk
         yield NS(usage=None, choices=[NS(delta=NS(content="hi", tool_calls=None), finish_reason=None)])
-        # final usage-only chunk (empty choices), as OpenAI sends with include_usage
         yield NS(usage=NS(prompt_tokens=10, completion_tokens=5, total_tokens=15,
                           prompt_tokens_details=NS(cached_tokens=3)),
                  choices=[])
@@ -36,13 +34,12 @@ def test_stream_options_requested_and_usage_captured():
 
     async def go():
         usage = None
-        async for ev in client._openai_stream(fake_messages := [{"role": "user", "content": "x"}],
+        async for ev in client._openai_stream([{"role": "user", "content": "x"}],
                                                tools=None, stream=True):
             if ev.type == StreamEventType.MESSAGE_COMPLETE:
                 usage = ev.usage
         return usage
 
-    # patch _get_client to return our fake
     client._get_client = lambda: fake
     usage = _run(go())
 

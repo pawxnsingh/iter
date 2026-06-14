@@ -1,7 +1,7 @@
 """
 Agent: Owns the query loop lifecycle.
 
-Claude Code equivalent: The Agent is thin — the real logic is in
+The Agent is thin — the real logic is in
 query_loop() (query/loop.py). Agent owns startup/shutdown and
 wires components together.
 
@@ -34,10 +34,8 @@ class Agent:
         self.session: Session | None = Session(config=config)
         self._permission_prompt_fn = permission_prompt_fn
         self._abort_controller: AbortController | None = None
-        # Start with an empty HookExecutor so callers don't need a None-guard
-        # before every fire site. Replaced with a real one in __aenter__ once
-        # we've snapshotted the hooks config.
         self._hook_executor: HookExecutor = HookExecutor()
+        self._user_context_reminder: str = ""
 
     def abort(self):
         """Cancel the current operation. Called from Ctrl+C handler."""
@@ -52,14 +50,45 @@ class Agent:
         self._abort_controller = AbortController()
 
         yield AgentEvent.agent_start(message)
+
+        prompt_hook = await self._hook_executor.run_event_hooks(
+            event=HookEvent.USER_PROMPT_SUBMIT,
+            data={
+                "prompt": message,
+                "session_id": self.session.session_id,
+                "cwd": str(self.config.cwd),
+            },
+        )
+
+        if prompt_hook.blocking_error:
+            yield AgentEvent.text_complete(
+                content=f"{prompt_hook.blocking_error}\n\nOriginal prompt: {message}"
+            )
+            self._abort_controller = None
+            yield AgentEvent.agent_end()
+            return
+
         self.session.context_manager.add_user_message(content=message)
         self.session.save_message(role="user", content=message)
 
-        # Fire UserPromptSubmit hook
-        await self._hook_executor.run_event_hooks(
-            event=HookEvent.USER_PROMPT_SUBMIT,
-            data={"message": message, "session_id": self.session.session_id},
-        )
+        if prompt_hook.additional_context:
+            ctx_text = prompt_hook.additional_context[:10000]
+            ctx = (
+                "<system-reminder>\n"
+                f"UserPromptSubmit hook additional context: {ctx_text}\n"
+                "</system-reminder>"
+            )
+            self.session.context_manager.add_user_message(content=ctx)
+            self.session.save_message(role="user", content=ctx)
+
+        if prompt_hook.prevent_continuation:
+            stop_msg = "Operation stopped by hook"
+            self.session.context_manager.add_user_message(content=stop_msg)
+            self.session.save_message(role="user", content=stop_msg)
+            yield AgentEvent.text_complete(content=stop_msg)
+            self._abort_controller = None
+            yield AgentEvent.agent_end()
+            return
 
         async for event in query_loop(
             self.session,
@@ -76,30 +105,45 @@ class Agent:
     async def __aenter__(self) -> Agent:
         await self.session.initialize()
 
-        # Inject compact function (Claude Code: QueryDeps pattern)
         compact_fn = create_compact_fn(
             client=self.session.client,
             model=self.config.model_name,
         )
         self.session.context_manager.set_compact_fn(compact_fn)
+        self.session.context_manager.set_summary_sink(self.session.save_summary)
+        self.session.context_manager.set_transcript_path(self.session.transcript_path)
 
-        # Load settings (5-layer merge) once: hooks + permission rules + ...
         from config.settings import (
+            apply_settings_env,
             extract_hooks_from_settings,
             extract_permission_rules,
+            get_default_permission_mode,
             load_settings,
         )
         settings = load_settings(str(self.config.cwd))
+
+        apply_settings_env(settings)
+
+        from core_types.permissions import PermissionMode
+        default_mode = get_default_permission_mode(settings)
+        if default_mode and self.config.permission_mode == PermissionMode.DEFAULT:
+            self.config.permission_mode = default_mode
+
         hooks_config = extract_hooks_from_settings(settings)
 
-        # Capture hooks snapshot at startup (Claude Code: immutable at startup)
         capture_hooks_snapshot(hooks_config if hooks_config else None)
         self._hook_executor = HookExecutor(get_hooks_from_snapshot())
+        from core_types.permissions import permission_mode_external
+        transcript_path = ""
+        if getattr(self.session, "storage", None) is not None:
+            transcript_path = str(self.session.storage.path)
+        self._hook_executor.set_base_context(
+            session_id=self.session.session_id,
+            transcript_path=transcript_path,
+            cwd=str(self.config.cwd),
+            permission_mode=permission_mode_external(self.config.permission_mode),
+        )
 
-        # Permission rules from settings.json → runtime context. CC parity:
-        # `allow`/`deny`/`ask` are lists of "Tool(content)" strings; parser
-        # bucketizes them by tool name. Only overlay onto Config if the
-        # caller hasn't already set rules explicitly.
         rules = extract_permission_rules(settings)
         if not self.config.allow_rules:
             self.config.allow_rules = rules.get("allow", {})
@@ -108,69 +152,62 @@ class Agent:
         if not self.config.ask_rules:
             self.config.ask_rules = rules.get("ask", {})
 
-        # Fire SessionStart hook
-        await self._hook_executor.run_event_hooks(
+        session_start = await self._hook_executor.run_event_hooks(
             event=HookEvent.SESSION_START,
             data={
                 "session_id": self.session.session_id,
+                "source": "startup",
                 "cwd": str(self.config.cwd),
                 "model": self.config.model_name,
             },
         )
+        if session_start.additional_context:
+            self.session.context_manager.add_user_message(
+                f"<session-start-hook>\n{session_start.additional_context}\n</session-start-hook>"
+            )
 
-        # Load the full instruction hierarchy (managed → user → walk-up project
-        # AGENT.md → .ai-agent/rules/*.md → local), fire InstructionsLoaded for
-        # each, AND fold the combined text into the system prompt. CC includes
-        # every CLAUDE.md tier in context; previously only a single cwd AGENT.md
-        # (config.developer_instructions) reached the model.
         from context.instructions import (
-            format_instructions_for_prompt,
+            build_system_context_suffix,
+            build_user_context_reminder,
             load_all_instructions,
         )
         instructions = load_all_instructions(str(self.config.cwd))
+        _MEMORY_TYPE = {"managed": "Managed", "user": "User",
+                        "project": "Project", "local": "Local"}
         for instr in instructions:
             await self._hook_executor.run_event_hooks(
                 event=HookEvent.INSTRUCTIONS_LOADED,
                 data={
                     "file_path": instr.path,
-                    "memory_type": instr.type,
-                    "load_reason": "initial_load",
+                    "memory_type": _MEMORY_TYPE.get(instr.type, instr.type),
+                    "load_reason": "session_start",
                 },
             )
-        if instructions:
-            cm = self.session.context_manager
-            base = cm.system_prompt or ""
-            # Only fold in tiers whose content isn't already in the prompt — the
-            # cwd AGENT.md is typically already present via developer_instructions;
-            # this adds the rest (managed, user, parent-dir, rules, local).
-            extra = [
-                i for i in instructions
-                if i.content and i.content.strip() and i.content.strip() not in base
-            ]
-            if extra:
-                combined = format_instructions_for_prompt(extra)
-                cm.set_system_prompt(
-                    f"{base}\n\n# Project & User Instructions\n\n{combined}"
-                    if base else combined
-                )
+        import datetime as _dt
+        self._user_context_reminder = build_user_context_reminder(
+            str(self.config.cwd), _dt.date.today().isoformat()
+        )
+        self.session.context_manager.set_user_context_reminder(
+            self._user_context_reminder
+        )
+        self.session.context_manager.set_system_context_suffix(
+            build_system_context_suffix(str(self.config.cwd))
+        )
 
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        # Fire SessionEnd hook — best-effort, must not prevent cleanup
         try:
             await self._hook_executor.run_event_hooks(
                 event=HookEvent.SESSION_END,
                 data={
                     "session_id": self.session.session_id if self.session else "",
-                    "exit_reason": "error" if exc_type else "normal",
-                    "turn_count": self.session._turn_count if self.session else 0,
+                    "reason": "other",
                 },
             )
         except Exception:
             pass
 
-        # Save final metadata
         if self.session:
             self.session._save_metadata()
 

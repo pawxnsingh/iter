@@ -1,7 +1,6 @@
 """
-Hook types — all 27 hook events from Claude Code.
+Hook types — all 27 hook events from.
 
-Source: Claude Code src/entrypoints/agentSdkTypes.ts (HOOK_EVENTS constant)
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ from typing import Any
 
 
 class HookEvent(str, Enum):
-    """All 28 hook events (27 from Claude Code + POST_SAMPLING).
+    """All 28 hook events.
 
     POST_SAMPLING fires after the model has produced a complete assistant
     message but BEFORE we run any of the requested tools. Lets external
@@ -71,3 +70,5 @@ class HookResult:
     system_message: str | None = None
     additional_context: str | None = None
     prevent_continuation: bool = False
+    requires_ask: bool = False
+    permission_decision: str | None = None

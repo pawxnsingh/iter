@@ -20,7 +20,6 @@ from rich.text import Text
 from textual.widget import Widget
 
 
-# 13-color rainbow, wraps seamlessly (first == last)
 _COLORS = [
     "#BD93F9", "#D6ACFF", "#FF79C6", "#FF92DF", "#FF5555",
     "#FFB86C", "#F1FA8C", "#50FA7B", "#69FF94", "#8BE9FD",
@@ -65,7 +64,7 @@ class Throbber(Widget):
     """
 
     CHARACTER = "━"
-    AUTO_REFRESH_INTERVAL = 1 / 15  # 15 FPS — fast enough for smooth motion
+    AUTO_REFRESH_INTERVAL = 1 / 15
 
     def on_mount(self) -> None:
         self.auto_refresh = self.AUTO_REFRESH_INTERVAL
@@ -73,7 +72,6 @@ class Throbber(Widget):
     def render(self) -> Text:
         width = max(1, self.size.width)
         t = monotonic()
-        # Phase shifts the gradient across the row; 1-second cycle.
         phase = (t % 1.0)
         text = Text(no_wrap=True, overflow="crop")
         for x in range(width):

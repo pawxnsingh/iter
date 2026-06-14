@@ -1,7 +1,7 @@
 """
 Shared read-file-state registry.
 
-Mirrors Claude Code's toolUseContext.readFileState (a Map<path, {timestamp,
+Mirrors the toolUseContext.readFileState (a Map<path, {timestamp,
 content, isPartialView, offset, limit}>). FileRead records every read here;
 FileEdit / FileWrite / NotebookEdit validate against it to enforce two rules
 the tool prompts promise:
@@ -12,7 +12,7 @@ the tool prompts promise:
 
 Keyed by resolved absolute path. Process-global like taskRegistry/agentRegistry;
 a fresh process (new session) starts empty, which is correct — read-state is
-per-session in CC too.
+per-session in too.
 """
 
 from __future__ import annotations
@@ -23,9 +23,9 @@ from pathlib import Path
 
 @dataclass
 class ReadRecord:
-    timestamp: float          # mtime of the file at read time
-    content: str              # full content read (for content-equality fallback)
-    is_partial_view: bool     # True if read used offset/limit (not a full read)
+    timestamp: float
+    content: str
+    is_partial_view: bool
     offset: int | None = None
     limit: int | None = None
 
@@ -43,18 +43,26 @@ def record_read(
     *,
     offset: int | None = None,
     limit: int | None = None,
+    is_partial_view: bool = False,
 ) -> None:
-    """Record that `path` was read. Called by FileRead after a successful read."""
+    """Record that `path` was read. Called by FileRead after a successful read.
+
+    parity: a normal Read — even a partial one with offset/limit — does NOT
+    set is_partial_view. is_partial_view
+    is reserved for INJECTED memory content that differs from disk
+; Edit/Write require a real Read when they see it. We
+    don't inject content, so callers leave it False, and any Read satisfies the
+    read-before-write gate.
+    """
     p = Path(path)
     try:
         mtime = p.stat().st_mtime
     except OSError:
         mtime = 0.0
-    is_partial = offset is not None or limit is not None
     _state[_key(p)] = ReadRecord(
         timestamp=mtime,
         content=content,
-        is_partial_view=is_partial,
+        is_partial_view=is_partial_view,
         offset=offset,
         limit=limit,
     )
@@ -64,11 +72,15 @@ def check_freshness(path: Path | str, current_content: str | None) -> str | None
     """
     Return an error message if `path` is not safe to write, else None.
 
-    Mirrors CC FileEditTool.validateInput (errorCode 6 + 7):
-      - never read       → "File has not been read yet. Read it first..."
-      - read partially   → same (a partial view isn't enough to safely edit)
+    Mirrors FileEditTool.validateInput (errorCode 6 + 7):
+      - never read, or only an injected partial view →
+        "File has not been read yet. Read it first..."
       - modified on disk since read (and content differs) →
         "File has been modified since read... Read it again..."
+
+    parity: a normal partial Read (offset/limit) DOES satisfy this gate — the
+    block only fires when there's no read record at all (or an injected
+    partial-view record, which we don't produce).
 
     current_content: the file's current text (None if it doesn't exist yet —
     Edit's create-new path passes None and skips the freshness branch).
@@ -82,11 +94,9 @@ def check_freshness(path: Path | str, current_content: str | None) -> str | None
     try:
         last_write = Path(path).stat().st_mtime
     except OSError:
-        return None  # file vanished; let the caller's own existence check handle it
+        return None
 
     if last_write > rec.timestamp:
-        # mtime moved. For a full read, fall back to content comparison so a
-        # touch-without-change (cloud sync, antivirus) isn't a false positive.
         if current_content is not None and current_content == rec.content:
             return None
         return (

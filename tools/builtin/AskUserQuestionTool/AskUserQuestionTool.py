@@ -1,9 +1,7 @@
 """
 AskUser tool — ask the user questions mid-execution.
 
-Source: Claude Code src/tools/AskUserQuestionTool/AskUserQuestionTool.tsx
-
-Verbatim CC schema parity:
+Verbatim schema parity:
   Input: questions: list[Question], min 1 max 4
     Question:
       question: str        (full question, ends with ?)
@@ -21,7 +19,7 @@ Verbatim CC schema parity:
   Refinement: question texts unique; option labels unique within each question.
 
   Output: {questions, answers (question_text → answer_str), annotations?}
-  Multi-select answers comma-separated, mirroring CC's output contract.
+  Multi-select answers comma-separated, mirroring the output contract.
 """
 
 
@@ -149,8 +147,6 @@ class AskUserParams(BaseModel):
 
     @model_validator(mode="after")
     def _check_uniqueness(self) -> "AskUserParams":
-        # CC's UNIQUENESS_REFINE: question texts unique; option labels unique
-        # within each question.
         seen: set[str] = set()
         for q in self.questions:
             if q.question in seen:
@@ -176,16 +172,14 @@ class AskUserQuestionTool(Tool):
     schema = AskUserParams
 
     def is_concurrency_safe(self, params: dict) -> bool:
-        return False  # Blocks for user input
+        return False
 
     def is_read_only(self, params: dict) -> bool:
-        return True  # Doesn't modify anything
+        return True
 
     async def execute(self, invocation: ToolInvocation) -> ToolResult:
         params = AskUserParams(**invocation.params)
 
-        # answers: question_text → answer string. Multi-select answers are
-        # comma-separated, mirroring CC's output contract (CC line 71).
         answers: dict[str, str] = {}
 
         for q in params.questions:
@@ -212,8 +206,6 @@ class AskUserQuestionTool(Tool):
                 answers[q.question] = ""
                 continue
 
-            # Resolve numeric selections → labels; everything else is
-            # free-text (the auto-injected "Other" choice).
             picks: list[str] = []
             for tok in (s.strip() for s in raw.split(",")):
                 if not tok:
@@ -229,16 +221,23 @@ class AskUserQuestionTool(Tool):
                 picks = picks[:1]
             answers[q.question] = ", ".join(picks)
 
-        # Readable text for the model's tool_result + structured metadata
-        # so callers (and CC-style SDK clients) can introspect.
-        lines = ["User answered the question(s):"]
+        parts: list[str] = []
         for q in params.questions:
             ans = answers.get(q.question, "")
-            lines.append(f"  - {q.question}")
-            lines.append(f"      → {ans or '(no answer)'}")
+            seg = [f'"{q.question}"="{ans}"']
+            ann = (params.annotations or {}).get(q.question)
+            if ann and ann.preview:
+                seg.append(f"selected preview:\n{ann.preview}")
+            if ann and ann.notes:
+                seg.append(f"user notes: {ann.notes}")
+            parts.append(" ".join(seg))
+        answers_text = ", ".join(parts)
 
         return ToolResult.success_result(
-            output="\n".join(lines),
+            output=(
+                f"User has answered your questions: {answers_text}. "
+                "You can now continue with the user's answers in mind."
+            ),
             metadata={
                 "questions": [q.model_dump() for q in params.questions],
                 "answers": answers,

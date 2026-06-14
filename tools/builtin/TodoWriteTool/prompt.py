@@ -1,6 +1,5 @@
 """
-TodoWrite tool prompt — verbatim from Claude Code
-src/tools/TodoWriteTool/prompt.ts (PROMPT constant).
+TodoWrite tool prompt.
 ${FILE_EDIT_TOOL_NAME} substituted with our "Edit".
 """
 

@@ -3,7 +3,6 @@ from pydantic import BaseModel, Field
 from tools.base import (
     FileDiff,
     Tool,
-    ToolConfirmation,
     ToolInvocation,
     ToolKind,
     ToolResult,
@@ -19,9 +18,6 @@ class WriteFileParams(BaseModel):
     )
 
     content: str = Field(..., description="Content to write to the file")
-    create_directories: bool = Field(
-        True, description="Create parent directories if they don't exist"
-    )
 
 
 class FileWriteTool(Tool):
@@ -39,69 +35,27 @@ class FileWriteTool(Tool):
         """Path matched against `Write(<pattern>)` rules."""
         return params.get("file_path")
 
-    async def get_confirmation(
-        self, invocation: ToolInvocation
-    ) -> ToolConfirmation | None:
-        params = WriteFileParams(**invocation.params)
-        path = resolve_path(invocation.cwd, params.file_path)
-
-        is_new_file = not path.exists()
-
-        old_content = ""
-        if not is_new_file:
-            try:
-                old_content = path.read_text(encoding="utf-8")
-            except Exception:
-                pass
-
-        diff = FileDiff(
-            path=path,
-            old_content=old_content,
-            new_content=params.content,
-            is_new_file=is_new_file,
-        )
-
-        action = "Created" if is_new_file else "Updated"
-
-        return ToolConfirmation(
-            tool_name=self.name,
-            params=invocation.params,
-            description=f"{action} file: {path}",
-            diff=diff,
-            affected_paths=[path],
-            is_dangerous=not is_new_file,
-        )
-
     async def execute(self, invocation: ToolInvocation) -> ToolResult:
         params = WriteFileParams(**invocation.params)
         path = resolve_path(invocation.cwd, params.file_path)
 
-        # first check if that new file
         is_new_file = not path.exists()
         old_content = ""
 
         if not is_new_file:
             old_content = path.read_text(encoding="utf-8")
-            # Read-before-overwrite + freshness (CC FileWriteTool errorCode 6/7).
-            # Only for existing files — creating a new file needs no prior read.
             from tools.builtin.shared.readFileState import check_freshness
             freshness_error = check_freshness(path, old_content)
             if freshness_error:
                 return ToolResult.error_result(freshness_error)
 
         try:
-            if params.create_directories:
-                ensure_parent_directory(path)
-            elif not path.parent.exists():
-                return ToolResult.error_result(
-                    f"Parent directory does not exist: {path.parent}"
-                )
+            ensure_parent_directory(path)
 
-            path.write_text(params.content, encoding="utf-8")
-            # Record post-write state so a subsequent edit/write doesn't trip
-            # freshness on our own change (CC: readFileState.set after write).
+            normalized = params.content.replace("\r\n", "\n").replace("\r", "\n")
+            path.write_text(normalized, encoding="utf-8", newline="")
             from tools.builtin.shared.readFileState import record_read
-            record_read(path, params.content)
+            record_read(path, normalized)
 
             action = "Created" if is_new_file else "Updated"
             line_count = len(params.content.splitlines())

@@ -80,8 +80,7 @@ user message gets a fresh state.
 
 The loop's only safeguards against runaway behavior are `max_turns`, the
 recovery counters above, and the optional `task_budget_tokens`. There is no
-tool-call repetition detector — Claude Code doesn't have one and neither do
-we.
+tool-call repetition detector.
 
 ---
 
@@ -172,8 +171,7 @@ this is intentional but worth knowing.
 ## 6. STEP 1 — Compact phase (lines 111-122)
 
 **One call site.** The full pipeline lives inside
-`ContextManager.get_messages_with_compaction()`, in the order Claude Code
-uses (`query.ts` ~396-468):
+`ContextManager.get_messages_with_compaction()`, in this order:
 
 ```
 snip → microcompact → context_collapse → autocompact → tool_result_budget
@@ -203,11 +201,10 @@ Two ordering invariants:
 ### 6c. No synthetic-413 preempt
 
 After the four compaction layers, the loop goes straight to STEP 2 — no
-local "are we at the blocking limit?" check before the API call. This
-matches Claude Code's behavior when reactive compact is enabled
-(`query.ts` ~628-647): the synthetic-413 preempt is gated off because it
-would `return` before the API call, and reactive compact would never see
-a real prompt-too-long to react to.
+local "are we at the blocking limit?" check before the API call. This is
+deliberate with reactive compact enabled: a synthetic-413 preempt would
+`return` before the API call, and reactive compact would never see a real
+prompt-too-long to react to.
 
 So the flow on overlong context is: compact runs → API call → real 413
 comes back → STEP 4 recovery branch detects PROMPT_TOO_LONG → fires
@@ -300,12 +297,13 @@ provider-specific exception strings to an `ErrorKind` enum. The recovery
 branches match on the enum, not the raw string. This is what lets the same
 recovery code work for Anthropic, OpenAI, and Azure.
 
-### Gotcha #6 — Overloaded fallback is still a stub
+### Gotcha #6 — Overloaded fallback lives in the client, not the loop
 
-The 529/overloaded branch (lines 218-222) detects the condition but only logs.
-Real model fallback (Claude Code's `FallbackTriggeredError`) requires
-mid-stream model swapping, which would touch `client/llm_client.py` for all
-three providers. Not done.
+Sustained 529/overloaded handling is implemented inside
+`client/llm_client.py`: retries with backoff, then a sticky switch to the
+configured fallback model (`LLM_FALLBACK_MODEL`). The loop itself never
+branches on it — it just sees a fresh stream after the client's
+`__RETRY_RESET__` marker.
 
 ---
 
@@ -589,9 +587,9 @@ whole user message, which is the whole point of the budget.
    Force one reactive compact, retry. If reactive already ran for this
    message, surface `agent_error("Context too large...")` and stop.
 3. **"How do you prevent infinite loops?"**
-  Two ways. (a) `max_turns` hard cap, line 501. (b) Per-message
-   `task_budget_tokens` if configured. Same as Claude Code — no
-   tool-call repetition heuristic.
+  Two ways. (a) `max_turns` hard cap. (b) Per-message
+   `task_budget_tokens` if configured. There is no tool-call repetition
+   heuristic.
 4. **"How are permissions enforced?"**
   Always before execution, line 380. Three behaviors: DENY → error result;
    ASK → prompt user (or default-deny if no prompt fn); ALLOW → proceed.

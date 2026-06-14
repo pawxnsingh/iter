@@ -10,7 +10,6 @@ from hooks.executor import HookExecutor
 
 
 def test_all_hook_events():
-    # 27 from Claude Code + PostSampling = 28
     assert len(HookEvent) == 28
 
 

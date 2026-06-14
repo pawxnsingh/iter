@@ -1,7 +1,7 @@
 """
 Session export — convert JSONL transcript to readable markdown.
 
-Source: Claude Code /export command
+Source: /export command
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ def export_session_to_markdown(transcript_path: str | Path) -> str:
 
     lines = ["# Session Transcript", ""]
 
-    # Add metadata
     first_ts = messages[0].get("timestamp", "")
     last_ts = messages[-1].get("timestamp", "")
     lines.append(f"**Started:** {first_ts}")
@@ -58,7 +57,6 @@ def export_session_to_markdown(transcript_path: str | Path) -> str:
             tool_name = msg.get("tool_name", "tool")
             lines.append(f"### Tool Result: {tool_name}")
             lines.append("")
-            # Truncate long tool outputs
             if len(content) > 2000:
                 lines.append(f"```\n{content[:2000]}\n... [truncated]\n```")
             else:

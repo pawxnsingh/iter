@@ -15,8 +15,6 @@ from tools.builtin.FileWriteTool import FileWriteTool
 config = Config()
 
 
-# ── Tool names match Claude Code ──
-
 def test_tool_names():
     names = {
         FileReadTool(config).name: "Read",
@@ -32,8 +30,6 @@ def test_tool_names():
         assert actual == expected, f"Expected {expected}, got {actual}"
 
 
-# ── Concurrency classification ──
-
 @pytest.mark.parametrize("tool_cls,expected", [
     (FileReadTool, True),
     (GrepTool, True),
@@ -48,8 +44,6 @@ def test_concurrency_safe(tool_cls, expected):
     assert tool.is_concurrency_safe({}) == expected
 
 
-# ── Read-only classification ──
-
 @pytest.mark.parametrize("tool_cls,expected", [
     (FileReadTool, True),
     (GrepTool, True),
@@ -63,8 +57,6 @@ def test_read_only(tool_cls, expected):
     tool = tool_cls(config)
     assert tool.is_read_only({}) == expected
 
-
-# ── Shell conditional classification ──
 
 def test_shell_read_only_commands():
     shell = BashTool(config)
@@ -88,8 +80,6 @@ def test_shell_destructive():
     assert not shell.is_destructive({"command": "ls"})
 
 
-# ── Tool orchestration partitioning ──
-
 def test_partition_parallel_reads():
     calls = [
         ToolCallRequest("c1", "Grep", {}),
@@ -102,7 +92,7 @@ def test_partition_parallel_reads():
         "Read": FileReadTool(config),
     }
     batches = partition_tool_calls(calls, tools)
-    assert len(batches) == 1  # all in one parallel batch
+    assert len(batches) == 1
     assert batches[0].is_concurrency_safe
     assert len(batches[0].calls) == 3
 
@@ -122,17 +112,15 @@ def test_partition_mixed():
     }
     batches = partition_tool_calls(calls, tools)
     assert len(batches) == 3
-    assert batches[0].is_concurrency_safe  # Grep+Glob parallel
+    assert batches[0].is_concurrency_safe
     assert len(batches[0].calls) == 2
-    assert not batches[1].is_concurrency_safe  # Edit serial
-    assert batches[2].is_concurrency_safe  # Read is safe, just in its own batch after write
+    assert not batches[1].is_concurrency_safe
+    assert batches[2].is_concurrency_safe
 
 
 def test_max_result_size():
-    # CC parity: per-tool maxResultSizeChars. Most tools default to 100k;
-    # Grep is 20k and Bash is 30k (claude-code GrepTool.ts / BashTool.tsx).
     expected = {
-        FileReadTool: 100_000,
+        FileReadTool: float("inf"),
         FileEditTool: 100_000,
         BashTool: 30_000,
         GrepTool: 20_000,

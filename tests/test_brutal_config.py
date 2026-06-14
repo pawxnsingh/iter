@@ -14,11 +14,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Config.validate()
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def test_config_validate_requires_any_provider(tmp_path: Path, monkeypatch) -> None:
     from config.config import Config
 
@@ -79,21 +74,14 @@ def test_config_to_dict_is_json_safe(tmp_path: Path) -> None:
 
     c = Config(cwd=tmp_path)
     d = c.to_dict()
-    # Should round-trip through JSON
     dumped = json.dumps(d)
     assert isinstance(dumped, str)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# config/loader.py
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 def test_load_config_no_files(tmp_path: Path, monkeypatch) -> None:
     """With no config files anywhere, load_config should return defaults."""
     from config import loader
 
-    # Redirect system config to a nonexistent place
     monkeypatch.setattr(
         loader,
         "get_system_config_path",
@@ -161,7 +149,7 @@ def test_load_config_invalid_toml_is_skipped(tmp_path: Path, monkeypatch, caplog
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
 
     cfg = loader.load_config(cwd=tmp_path)
-    assert cfg.cwd == tmp_path  # still loaded defaults
+    assert cfg.cwd == tmp_path
 
 
 def test_merge_dicts_nested() -> None:
@@ -176,7 +164,6 @@ def test_merge_dicts_nested() -> None:
 def test_merge_dicts_override_type_mismatch() -> None:
     from config.loader import _merge_dicts
 
-    # Override changes type from dict to scalar — scalar wins
     a = {"k": {"inner": 1}}
     b = {"k": "string"}
     assert _merge_dicts(a, b) == {"k": "string"}
@@ -188,4 +175,4 @@ def test_merge_dicts_base_unmutated() -> None:
     base = {"a": {"x": 1}}
     override = {"a": {"y": 2}}
     _merge_dicts(base, override)
-    assert base == {"a": {"x": 1}}  # base must not be mutated
+    assert base == {"a": {"x": 1}}

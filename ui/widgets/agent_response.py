@@ -36,7 +36,6 @@ class AgentResponse(Markdown):
     }
     """
 
-    # Used by block-cursor navigation (not required for streaming)
     block_cursor_offset = var(-1)
 
     def __init__(self, initial: str = "") -> None:
@@ -47,9 +46,7 @@ class AgentResponse(Markdown):
         """Append a streaming text chunk."""
         if not fragment:
             return
-        # Materialize the stream lazily — it must be constructed after mount.
         if self._stream is None:
             self._stream = self.get_stream(self)
-        # `loading` lets Textual show an ellipsis while the first chunk is mid-parse
         self.loading = False
         await self._stream.write(fragment)

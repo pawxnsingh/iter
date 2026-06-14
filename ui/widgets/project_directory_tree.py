@@ -14,8 +14,6 @@ from textual.reactive import reactive
 from textual.widgets import DirectoryTree
 
 
-# Patterns we never show in the tree. Extend as needed — keeping this
-# minimal on purpose; a full .gitignore parser belongs in a follow-up.
 _HIDDEN_PATTERNS = {
     ".git",
     ".hg",
@@ -47,7 +45,7 @@ class ProjectDirectoryTree(DirectoryTree):
         try:
             if str(self.path) != str(path):
                 return
-            self.path_ = str(path)  # parent class uses `path` getter
+            self.path_ = str(path)
             self.reload()
         except Exception:
             pass

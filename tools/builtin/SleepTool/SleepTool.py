@@ -1,7 +1,7 @@
 """
 Sleep tool — pause execution for a specified duration.
 
-Source: Claude Code src/tools/SleepTool/
+Source: src/tools/SleepTool/
 
 Used by agents to:
   - Wait for background tasks to complete

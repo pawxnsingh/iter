@@ -69,7 +69,6 @@ class AgentResultTool(Tool):
                 f"Try again shortly.",
                 metadata={"task_id": params.task_id, "status": "running"},
             )
-        # Task is done but result not yet recorded — race; report finishing.
         return ToolResult.success_result(
             f"Agent #{params.task_id} is finishing; result not yet available.",
             metadata={"task_id": params.task_id, "status": "finishing"},

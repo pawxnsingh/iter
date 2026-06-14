@@ -34,7 +34,6 @@ _ANSI = "\x1b"
 _MARKDOWN_HEADING = re.compile(r"^#{1,6}\s.*$", re.MULTILINE)
 
 
-# Short, human-readable verb per tool name. Unknown tools fall back to the name itself.
 _VERB = {
     "Read": "Reading",
     "Edit": "Edit",
@@ -66,7 +65,6 @@ def _summary(name: str, args: dict[str, Any]) -> str:
         case "WebFetch":
             return str(args.get("url", ""))[:60]
         case _:
-            # Show first string arg we find
             for v in args.values():
                 if isinstance(v, str) and v:
                     return v[:80]
@@ -126,10 +124,6 @@ class ToolCall(VerticalGroup):
     }
     """
 
-    # Public reactives drive CSS class state. Tool status (running/success/
-    # error) is a tri-state toggled via plain add_class/remove_class to
-    # avoid underscore-prefixed reactive names, which conflict with Textual
-    # internals like MessagePump._is_mounted during early mount.
     has_content: var[bool] = var(False, toggle_class="-has-content")
     expanded: var[bool] = var(False, toggle_class="-expanded")
 
@@ -140,7 +134,7 @@ class ToolCall(VerticalGroup):
         self.call_id = call_id
         self.tool_name = name
         self.arguments = arguments
-        self._status: str = "running"  # "running" | "success" | "error"
+        self._status: str = "running"
         self.add_class("-running")
 
     @property
@@ -165,7 +159,6 @@ class ToolCall(VerticalGroup):
         yield ToolCallHeader(self._render_header())
         yield VerticalGroup(id="tool-content")
 
-    # ─── Header ───────────────────────────────────────────────────────
 
     def _render_header(self) -> Content:
         verb = _VERB.get(self.tool_name, self.tool_name)
@@ -198,7 +191,6 @@ class ToolCall(VerticalGroup):
             return
         header.update(self._render_header())
 
-    # ─── Completion ───────────────────────────────────────────────────
 
     async def complete(
         self,
@@ -229,13 +221,11 @@ class ToolCall(VerticalGroup):
             stripped = output.strip()
             if stripped:
                 if _ANSI in stripped:
-                    # Don't parse ANSI in a basic port; strip codes and show plain
                     clean = re.sub(r"\x1b\[[0-9;]*m", "", stripped)
                     await body.mount(Static(clean))
                 elif _looks_like_markdown(stripped):
                     await body.mount(Markdown(stripped))
                 else:
-                    # Cap plain output at ~40 lines for collapsed-first UX
                     lines = stripped.split("\n")
                     capped = "\n".join(lines[:40])
                     if len(lines) > 40:
@@ -248,13 +238,11 @@ class ToolCall(VerticalGroup):
             rendered_any = True
 
         self.has_content = rendered_any
-        # Auto-expand on error so the user sees what went wrong
         if self.is_error and rendered_any:
             self.expanded = True
 
         self._refresh_header()
 
-    # ─── Interactions ─────────────────────────────────────────────────
 
     @on(events.Click)
     def _on_click(self, event: events.Click) -> None:

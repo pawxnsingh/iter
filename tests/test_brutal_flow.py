@@ -42,9 +42,6 @@ def _text(widget) -> str:
         return repr(widget)
 
 
-# ─── Stress: high-frequency streaming ────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_stream_many_deltas_without_drops() -> None:
     """Post 200 TextDelta messages; assistant block must end with the full text."""
@@ -66,15 +63,12 @@ async def test_stream_many_deltas_without_drops() -> None:
         conv.post_message(TextComplete())
         conv.post_message(AgentEnded())
 
-        # Let the message pump drain
         for _ in range(40):
             await pilot.pause(0.05)
             if list(conv.query(AgentResponse)):
                 break
         responses = list(conv.query(AgentResponse))
         assert responses, "no AgentResponse was mounted"
-        # MarkdownStream receives everything via async write; just verify the
-        # widget has content beyond empty.
         assert len(responses[0].source) > 100, (
             f"expected stream content, got {responses[0].source!r}"
         )
@@ -123,7 +117,6 @@ async def test_tool_interleaved_with_text() -> None:
             if len(list(conv.query(ToolCall))) >= 2 and len(list(conv.query(AgentResponse))) >= 2:
                 break
         assert len(list(conv.query(ToolCall))) == 2
-        # At least two AgentResponse blocks — one per TextComplete cycle
         assert len(list(conv.query(AgentResponse))) >= 2
 
 
@@ -256,10 +249,8 @@ async def test_abort_action_does_not_crash() -> None:
         ta = app.query_one(PromptTextArea)
         ta.focus()
         await pilot.pause()
-        # Empty prompt → ctrl+c triggers abort (not clear)
         await pilot.press("ctrl+c")
         await pilot.pause()
-        # Agent should still be reachable; abort is idempotent
         assert conv._agent is not None
 
 
@@ -277,7 +268,6 @@ async def test_slash_chosen_from_overlay_triggers_command() -> None:
         conv = app.query_one(Conversation)
         await _wait_for_agent(conv, pilot)
 
-        # Simulate picking /version from the overlay
         conv.post_message(SlashCommandChosen(command="/version"))
         for _ in range(40):
             await pilot.pause(0.05)

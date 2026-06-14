@@ -30,7 +30,6 @@ class StrikeText(Widget):
 
     strike_time: reactive[float | None] = reactive(None)
 
-    # Characters per second of strike advance
     _RATE = 70.0
 
     def __init__(

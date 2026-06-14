@@ -1,6 +1,5 @@
 """
-TaskGetTool prompt — verbatim from Claude Code
-src/tools/TaskGetTool/prompt.ts (PROMPT).
+TaskGetTool prompt.
 """
 
 DESCRIPTION = "Get a task by ID from the task list"

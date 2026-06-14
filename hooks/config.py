@@ -1,8 +1,6 @@
 """
 Hook config snapshot — captured once at startup, immutable during session.
 
-Source: Claude Code src/utils/hooks/hooksConfigSnapshot.ts
-
 Security: Hooks are frozen at startup to prevent TOCTOU attacks.
 A user cannot modify settings.json mid-session to inject hooks.
 """
@@ -22,7 +20,7 @@ _snapshot: dict[str, list[HookCommand]] | None = None
 def capture_hooks_snapshot(hooks_config: dict[str, list[HookCommand]] | None = None) -> None:
     """
     Capture hooks config once at startup.
-    Claude Code: captureHooksConfigSnapshot()
+    captureHooksConfigSnapshot
     """
     global _snapshot
     _snapshot = copy.deepcopy(hooks_config) if hooks_config else {}
@@ -32,7 +30,7 @@ def capture_hooks_snapshot(hooks_config: dict[str, list[HookCommand]] | None = N
 def get_hooks_from_snapshot() -> dict[str, list[HookCommand]]:
     """
     Get the frozen hooks config.
-    Claude Code: getHooksConfigFromSnapshot()
+    getHooksConfigFromSnapshot
     """
     if _snapshot is None:
         return {}

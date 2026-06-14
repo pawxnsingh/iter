@@ -1,3 +1,3 @@
-"""Mirrors Claude Code src/tools/EnterPlanModeTool/constants.ts."""
+"""EnterPlanMode tool constants."""
 
 ENTER_PLAN_MODE_TOOL_NAME = "EnterPlanMode"

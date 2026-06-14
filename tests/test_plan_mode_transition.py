@@ -53,7 +53,7 @@ def test_enter_plan_mode_blocks_subsequent_write():
                     results.append((ev.data.get("name"), ev.data.get("success")))
             await sess.client.close()
             writes = [ok for n, ok in results if n == "Write"]
-            assert writes and writes[0] is False  # Write denied under plan mode
+            assert writes and writes[0] is False
             assert not (cwd / "b.txt").exists()
 
     asyncio.get_event_loop().run_until_complete(go())

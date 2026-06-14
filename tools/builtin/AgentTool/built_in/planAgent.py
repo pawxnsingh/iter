@@ -1,6 +1,5 @@
 """
-Plan agent definition — verbatim from Claude Code
-src/tools/AgentTool/built-in/planAgent.ts (getPlanV2SystemPrompt).
+Plan agent definition.
 
 External-build variant: hasEmbeddedSearchTools() is False (we have Glob/Grep).
 Tool name constants substituted statically.
@@ -11,7 +10,7 @@ from tools.builtin.AgentTool.built_in_types import AgentDefinition
 
 
 def get_plan_system_prompt() -> str:
-    return """You are a software architect and planning specialist for Claude Code. Your role is to explore the codebase and design implementation plans.
+    return """You are a software architect and planning specialist for an interactive coding CLI. Your role is to explore the codebase and design implementation plans.
 
 === CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===
 This is a READ-ONLY planning task. You are STRICTLY PROHIBITED from:
@@ -80,6 +79,5 @@ PLAN_AGENT = AgentDefinition(
     ],
     tools=EXPLORE_AGENT.tools,
     model="inherit",
-    omit_claude_md=True,
     system_prompt=get_plan_system_prompt,
 )

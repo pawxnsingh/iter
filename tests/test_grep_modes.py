@@ -1,4 +1,4 @@
-"""Grep tool CC parity: output modes, filters, context, head_limit (ripgrep wrapper)."""
+"""Grep tool parity: output modes, filters, context, head_limit (ripgrep wrapper)."""
 import asyncio
 import tempfile
 from pathlib import Path
@@ -70,11 +70,11 @@ def test_head_limit_truncates():
     with tempfile.TemporaryDirectory() as t:
         cwd = Path(t); _setup(cwd)
         r = _grep(cwd, pattern="foo", output_mode="content", head_limit=1)
-        assert r.success and "truncated" in r.output
+        assert r.success and "limit: 1" in r.output
 
 
 def test_no_match():
     with tempfile.TemporaryDirectory() as t:
         cwd = Path(t); _setup(cwd)
         r = _grep(cwd, pattern="zzzznevermatch")
-        assert r.success and "No matches" in r.output
+        assert r.success and "No files found" in r.output

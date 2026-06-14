@@ -1,7 +1,7 @@
 """
-Built-in tools — each tool lives in its own directory matching Claude Code's
+Built-in tools — each tool lives in its own directory matching 's
 structure (tools/<ToolName>Tool/<ToolName>Tool.py, plus prompt.py for the
-tools that ship verbatim Claude Code model-facing guidance).
+tools that ship verbatim model-facing guidance).
 
 Re-exports here exist for backward compatibility — existing call sites still
 import classes from `tools.builtin`. New code should prefer

@@ -1,6 +1,6 @@
 """
-WebSearch tool prompt — verbatim from Claude Code src/tools/WebSearchTool/prompt.ts
-getWebSearchPrompt(). The {month_year} placeholder is substituted at runtime.
+WebSearch tool prompt.
+The {month_year} placeholder is substituted at runtime.
 """
 
 import datetime
@@ -11,10 +11,10 @@ def _current_month_year() -> str:
     return now.strftime("%B %Y")
 
 
-WEB_SEARCH_PROMPT = f"""- Allows Claude to search the web and use the results to inform responses
+WEB_SEARCH_PROMPT = f"""- Allows the assistant to search the web and use the results to inform responses
 - Provides up-to-date information for current events and recent data
 - Returns search result information formatted as search result blocks, including links as markdown hyperlinks
-- Use this tool for accessing information beyond Claude's knowledge cutoff
+- Use this tool for accessing information beyond the model's knowledge cutoff
 - Searches are performed automatically within a single API call
 
 CRITICAL REQUIREMENT - You MUST follow this:

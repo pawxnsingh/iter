@@ -1,8 +1,6 @@
 """
-ToolSearchTool prompt — derived from Claude Code
-src/tools/ToolSearchTool/prompt.ts getPrompt() (PROMPT_HEAD +
-location hint + PROMPT_TAIL), with the <available-deferred-tools>
-phrasing since we don't have the system-reminder delta gate.
+ToolSearch tool prompt, using the <available-deferred-tools> phrasing (there is
+no system-reminder delta gate here).
 """
 
 PROMPT_HEAD = "Fetches full schema definitions for deferred tools so they can be called.\n\n"

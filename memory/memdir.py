@@ -1,8 +1,6 @@
 """
 Memory directory management.
 
-Source: Claude Code src/memdir/memdir.ts
-
 MEMORY.md is an index file that gets truncated at:
   MAX_ENTRYPOINT_LINES = 200
   MAX_ENTRYPOINT_BYTES = 25,000
@@ -23,7 +21,6 @@ from pathlib import Path
 
 from platformdirs import user_config_dir
 
-# Claude Code exact constants
 ENTRYPOINT_NAME = "MEMORY.md"
 MAX_ENTRYPOINT_LINES = 200
 MAX_ENTRYPOINT_BYTES = 25_000
@@ -45,7 +42,6 @@ def ensure_memory_dir(project_dir: str) -> Path:
 def load_memory_prompt(project_dir: str) -> str:
     """
     Load MEMORY.md with truncation.
-    Claude Code: buildMemoryPrompt() in memdir.ts
     """
     memory_dir = get_memory_dir(project_dir)
     entrypoint = memory_dir / ENTRYPOINT_NAME
@@ -67,7 +63,6 @@ def load_memory_prompt(project_dir: str) -> str:
 def truncate_entrypoint(raw: str) -> str:
     """
     Truncate MEMORY.md to line AND byte caps.
-    Claude Code: truncateEntrypointContent() in memdir.ts line 57.
     """
     lines = raw.split("\n")
     line_count = len(lines)
@@ -79,15 +74,12 @@ def truncate_entrypoint(raw: str) -> str:
     if not was_line_truncated and not was_byte_truncated:
         return raw
 
-    # Line-truncate first
     truncated = "\n".join(lines[:MAX_ENTRYPOINT_LINES]) if was_line_truncated else raw
 
-    # Then byte-truncate at last newline
     if len(truncated) > MAX_ENTRYPOINT_BYTES:
         cut = truncated.rfind("\n", 0, MAX_ENTRYPOINT_BYTES)
         truncated = truncated[:cut if cut > 0 else MAX_ENTRYPOINT_BYTES]
 
-    # Append warning
     if was_byte_truncated and not was_line_truncated:
         reason = f"{byte_count} bytes (limit: {MAX_ENTRYPOINT_BYTES})"
     elif was_line_truncated and not was_byte_truncated:

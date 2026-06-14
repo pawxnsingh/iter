@@ -1,14 +1,14 @@
 """
-PDF page rendering — Claude Code parity (src/utils/pdf.ts + utils/pdfUtils.ts).
+PDF page rendering — parity.
 
-Claude Code does NOT extract PDF text. It reads PDFs as VISION: pages are
+does NOT extract PDF text. It reads PDFs as VISION: pages are
 rendered to JPEG images with `pdftoppm` (poppler-utils) and fed to the model as
-image blocks; the page count is read with `pdfinfo`. This module mirrors CC's
+image blocks; the page count is read with `pdfinfo`. This module mirrors 's
 getPDFPageCount / extractPDFPages / parsePDFPageRange.
 
-We always render to page-images. That is CC's `!isPDFSupported()` branch, and it
+We always render to page-images. That is the `!isPDFSupported` branch, and it
 is the only branch that works for non-Anthropic providers: OpenAI/Azure have no
-native `application/pdf` document block, only image inputs. CC's small-PDF path
+native `application/pdf` document block, only image inputs. the small-PDF path
 (inline `application/pdf` document block, Anthropic-native) is intentionally not
 ported — it is unreachable without a live Anthropic provider, which this build
 does not have, so porting it would be untested dead code.
@@ -23,11 +23,10 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-# Claude Code constants (src/constants/apiLimits.ts).
-PDF_MAX_PAGES_PER_READ = 20  # max pages per request via the `pages` param
-PDF_AT_MENTION_INLINE_THRESHOLD = 10  # whole-PDF read only if <= this many pages
-PDF_MAX_EXTRACT_SIZE = 100 * 1024 * 1024  # 100 MB hard cap on extraction
-PDF_RENDER_DPI = 100  # CC: `pdftoppm -r 100`
+PDF_MAX_PAGES_PER_READ = 20
+PDF_AT_MENTION_INLINE_THRESHOLD = 10
+PDF_MAX_EXTRACT_SIZE = 100 * 1024 * 1024
+PDF_RENDER_DPI = 100
 
 
 class PDFRenderError(Exception):
@@ -35,25 +34,24 @@ class PDFRenderError(Exception):
 
 
 def pdf_render_available() -> bool:
-    """True when the poppler binary CC relies on (`pdftoppm`) is installed."""
+    """True when the poppler binary relies on (`pdftoppm`) is installed."""
     return shutil.which("pdftoppm") is not None
 
 
 def parse_pdf_page_range(pages: str) -> tuple[int, float] | None:
     """Parse a page range into (first_page, last_page), 1-indexed inclusive.
 
-    Mirrors CC parsePDFPageRange exactly:
+    Mirrors parsePDFPageRange exactly:
       "5"    -> (5, 5)
       "1-10" -> (1, 10)
       "3-"   -> (3, inf)   open-ended
     Returns None on invalid input (non-numeric, zero, inverted range). No
-    comma lists — a single contiguous range only, matching CC.
+    comma lists — a single contiguous range only, matching.
     """
     trimmed = pages.strip()
     if not trimmed:
         return None
 
-    # "N-" open-ended range
     if trimmed.endswith("-"):
         try:
             first = int(trimmed[:-1])
@@ -65,7 +63,6 @@ def parse_pdf_page_range(pages: str) -> tuple[int, float] | None:
 
     dash = trimmed.find("-")
     if dash == -1:
-        # Single page: "5"
         try:
             page = int(trimmed)
         except ValueError:
@@ -74,7 +71,6 @@ def parse_pdf_page_range(pages: str) -> tuple[int, float] | None:
             return None
         return (page, page)
 
-    # Range: "1-10"
     try:
         first = int(trimmed[:dash])
         last = int(trimmed[dash + 1:])
@@ -86,12 +82,12 @@ def parse_pdf_page_range(pages: str) -> tuple[int, float] | None:
 
 
 def page_range_count(first_page: int, last_page: float) -> float:
-    """Number of pages a parsed range covers (inf when open-ended), CC parity."""
+    """Number of pages a parsed range covers (inf when open-ended), parity."""
     return math.inf if last_page == math.inf else last_page - first_page + 1
 
 
 def get_pdf_page_count(path: Path) -> int | None:
-    """Page count via `pdfinfo` (CC getPDFPageCount). None if undeterminable."""
+    """Page count via `pdfinfo`. None if undeterminable."""
     if shutil.which("pdfinfo") is None:
         return None
     try:
@@ -119,11 +115,11 @@ def render_pdf_pages(
     first_page: int | None = None,
     last_page: float | None = None,
 ) -> list[dict[str, str]]:
-    """Render PDF pages to base64 JPEGs via `pdftoppm` (CC extractPDFPages).
+    """Render PDF pages to base64 JPEGs via `pdftoppm`.
 
     Returns image attachments in page order:
         [{"media_type": "image/jpeg", "data": <base64>}, ...]
-    Raises PDFRenderError with a CC-aligned message on any failure.
+    Raises PDFRenderError with a -aligned message on any failure.
     """
     size = path.stat().st_size
     if size == 0:
@@ -142,7 +138,6 @@ def render_pdf_pages(
 
     with tempfile.TemporaryDirectory(prefix="pdf-") as outdir:
         prefix = str(Path(outdir) / "page")
-        # CC: `pdftoppm -jpeg -r 100 [-f first] [-l last] <file> <prefix>`
         args = ["pdftoppm", "-jpeg", "-r", str(PDF_RENDER_DPI)]
         if first_page:
             args += ["-f", str(first_page)]

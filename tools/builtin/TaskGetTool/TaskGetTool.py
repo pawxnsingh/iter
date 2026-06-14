@@ -1,7 +1,7 @@
 """
 TaskGet tool — get details of a specific task.
 
-Source: Claude Code src/tools/TaskGetTool/
+Source: src/tools/TaskGetTool/
 """
 
 from __future__ import annotations

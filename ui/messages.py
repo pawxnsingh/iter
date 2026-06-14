@@ -14,9 +14,6 @@ from typing import Any, Literal
 from textual.message import Message
 
 
-# ─── User actions ──────────────────────────────────────────────────────────
-
-
 @dataclass
 class UserInputSubmitted(Message):
     """User pressed enter in the prompt."""
@@ -29,7 +26,7 @@ class UserInputSubmitted(Message):
 class SlashCommandChosen(Message):
     """User picked a command from the SlashComplete overlay."""
 
-    command: str  # e.g. "/help"
+    command: str
 
 
 @dataclass
@@ -58,11 +55,8 @@ class Dismiss(Message):
     """A popup / overlay wants to be dismissed."""
 
     @property
-    def control(self):  # Textual convention for @on selectors
+    def control(self):
         return self.source if hasattr(self, "source") else None
-
-
-# ─── Agent events (mirror of AgentEventType) ──────────────────────────────
 
 
 @dataclass
@@ -112,9 +106,6 @@ class ToolCompleted(Message):
     diff: str | None
     truncated: bool
     exit_code: int | None
-
-
-# ─── Ambient notifications ────────────────────────────────────────────────
 
 
 @dataclass

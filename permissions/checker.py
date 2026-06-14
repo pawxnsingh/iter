@@ -1,9 +1,7 @@
 """
 Permission Checker: Full mode-based permission system.
 
-Source: Claude Code src/utils/permissions/permissions.ts (lines 1158-1319)
-
-Flow (exact from Claude Code hasPermissionsToUseToolInner):
+Flow:
   Stage 1: Rule & Tool-Level Checks (pre-mode)
     1a. Tool denied? → DENY
     1b. Tool asks? → ASK (unless sandboxed)
@@ -21,6 +19,7 @@ Flow (exact from Claude Code hasPermissionsToUseToolInner):
 from __future__ import annotations
 
 import logging
+import os
 from typing import Awaitable, Callable
 
 from core_types.permissions import (
@@ -29,21 +28,19 @@ from core_types.permissions import (
     ToolPermissionContext,
 )
 from permissions.filesystem import (
-    get_paths_for_permission_check,
-    is_sensitive_path,
+    is_protected_auto_edit_path,
     path_in_working_directory,
 )
 from permissions.rules import match_rules_for_tool
 
 logger = logging.getLogger(__name__)
 
-# Commands auto-allowed in accept_edits mode (Claude Code: modeValidation.ts)
 ACCEPT_EDITS_COMMANDS = {"mkdir", "touch", "rm", "rmdir", "mv", "cp", "sed"}
 
 
 class PermissionChecker:
     """
-    Full permission checker matching Claude Code's 3-stage flow.
+    Full permission checker matching the 3-stage flow.
     """
 
     def __init__(
@@ -57,14 +54,8 @@ class PermissionChecker:
     async def check(self, tool, params: dict) -> PermissionResult:
         """
         Check if a tool call is permitted.
-        Mirrors Claude Code's hasPermissionsToUseToolInner().
+        Mirrors the hasPermissionsToUseToolInner.
         """
-        # dont_ask transform (CC parity: permissions.ts:503). CC computes the
-        # normal decision, then at the very end converts any 'ask' → 'deny'
-        # when mode == dontAsk. Decisions that resolve to 'allow' (read-only
-        # auto-allow, allow rule, bypass) are unaffected — so a read-only tool
-        # or read-only-classified Bash command is still allowed in dont_ask.
-        # Routing every ask through this keeps that transform un-bypassable.
         def _ask(message: str, reason: str) -> PermissionResult:
             if self.context.mode == PermissionMode.DONT_ASK:
                 return PermissionResult.deny(
@@ -73,73 +64,95 @@ class PermissionChecker:
                 )
             return PermissionResult.ask(message, reason=reason)
 
-        # ══════════════════════════════════════════════════════════
-        # STAGE 1: Rule & Tool-Level Checks (pre-mode)
-        # ══════════════════════════════════════════════════════════
 
-        # 1a. Tool denied by deny rules?
         deny_matches = match_rules_for_tool(tool.name, self.context.deny_rules, _pv(tool, params))
+        if not deny_matches and tool.name == "Bash":
+            from permissions.bash_security import split_and_normalize_command
+            for seg in split_and_normalize_command(params.get("command", "")):
+                seg_match = match_rules_for_tool("Bash", self.context.deny_rules, seg)
+                if seg_match:
+                    deny_matches = seg_match
+                    break
         if deny_matches:
             return PermissionResult.deny(
                 f"Denied by rule: {deny_matches[0]}",
                 reason="rule:deny",
             )
 
-        # 1b. Tool has ask rules?
         ask_matches = match_rules_for_tool(tool.name, self.context.ask_rules, _pv(tool, params))
+        if not ask_matches and tool.name == "Bash":
+            from permissions.bash_security import split_and_normalize_command
+            for seg in split_and_normalize_command(params.get("command", "")):
+                seg_match = match_rules_for_tool("Bash", self.context.ask_rules, seg)
+                if seg_match:
+                    ask_matches = seg_match
+                    break
 
-        # 1c. Safety check: sensitive paths (bypass-immune ask; dont_ask → deny)
-        path = getattr(tool, 'get_path', lambda p: None)(params)
-        if path:
-            all_paths = get_paths_for_permission_check(path)
-            for p in all_paths:
-                if is_sensitive_path(p):
-                    return _ask(
-                        f"Accessing sensitive path: {p}",
-                        reason="safety_check",
-                    )
 
-        # 1d. Destructive tool check (bypass-immune ask; dont_ask → deny)
-        if hasattr(tool, 'is_destructive') and tool.is_destructive(params):
-            return _ask(
-                f"DESTRUCTIVE: {tool.name} — {self._describe_action(tool, params)}",
-                reason="destructive",
-            )
+        if not tool.is_read_only(params):
+            wpath = getattr(tool, 'get_path', lambda p: None)(params)
+            if wpath and is_protected_auto_edit_path(wpath):
+                return _ask(
+                    f"Editing a protected config/VCS path: {wpath}",
+                    reason="protected_path",
+                )
 
-        # ══════════════════════════════════════════════════════════
-        # STAGE 2: Mode-Based Decision
-        # ══════════════════════════════════════════════════════════
+        cp = getattr(tool, "check_permissions", None)
+        if callable(cp):
+            try:
+                tool_decision = cp(params, self.context.mode)
+            except Exception:
+                tool_decision = None
+            if tool_decision:
+                behavior, msg = tool_decision
+                if behavior == "deny":
+                    return PermissionResult.deny(msg, reason="tool:check")
+                if behavior == "ask":
+                    return _ask(msg, reason="tool:check")
+                if behavior == "allow":
+                    return PermissionResult.allow(reason="tool:check")
 
-        # 2a. Bypass mode → allow all (highest priority after safety checks)
+
         if self.context.mode == PermissionMode.BYPASS:
             return PermissionResult.allow(reason="mode:bypass")
 
-        # 2b. Read-only tools auto-allowed (including in plan/dont_ask — CC parity:
-        # read-only resolves to 'allow' and is not subject to the dont_ask
-        # ask→deny transform). Plan mode only blocks tools that would mutate state.
         if tool.is_read_only(params):
-            return PermissionResult.allow(reason="read_only")
+            rd_path = getattr(tool, 'get_path', lambda p: None)(params)
+            work_dirs = self.context.working_directories or (os.getcwd(),)
+            if rd_path and not os.path.isabs(rd_path):
+                rd_path = os.path.join(work_dirs[0], rd_path)
+            in_cwd = (
+                not rd_path
+                or path_in_working_directory(rd_path, work_dirs)
+            )
+            if in_cwd and not ask_matches:
+                return PermissionResult.allow(reason="read_only")
+            if match_rules_for_tool(tool.name, self.context.allow_rules, _pv(tool, params)):
+                return PermissionResult.allow(reason="rule:allow")
+            if ask_matches:
+                return _ask(
+                    f"Allow {tool.name}? (matched rule: {ask_matches[0]})",
+                    reason="rule:ask",
+                )
+            return _ask(
+                f"Read outside working directory: {rd_path}",
+                reason="read_outside_cwd",
+            )
 
-        # 2c. Plan mode → block non-read-only tool execution
         if self.context.mode == PermissionMode.PLAN:
             return PermissionResult.deny(
                 "Plan mode: write/mutate tools blocked. Use ExitPlanMode to exit.",
                 reason="mode:plan",
             )
 
-        # 2d. Accept edits mode — auto-allow filesystem commands in working dirs
         if self.context.mode == PermissionMode.ACCEPT_EDITS:
-            if self._is_accept_edits_allowed(tool, params):
+            if self._is_accept_edits_allowed(tool, params) and not ask_matches:
                 return PermissionResult.allow(reason="mode:accept_edits")
 
-        # 2e. Check allow rules
         allow_matches = match_rules_for_tool(tool.name, self.context.allow_rules, _pv(tool, params))
         if allow_matches:
             return PermissionResult.allow(reason="rule:allow")
 
-        # ══════════════════════════════════════════════════════════
-        # STAGE 3: Default → ASK  (dont_ask transform converts these to deny)
-        # ══════════════════════════════════════════════════════════
 
         if ask_matches:
             return _ask(
@@ -152,28 +165,57 @@ class PermissionChecker:
             reason="default:ask",
         )
 
+    def check_rules_only(self, tool, params: dict) -> PermissionResult | None:
+        """Rule-only permission check.
+
+        Used when a PreToolUse hook returned permissionDecision:'allow' — the hook
+        bypasses the default prompt and mode logic, but explicit deny/ask RULES
+        still apply. Returns a DENY/ASK PermissionResult if a rule matches, else
+        None (meaning: allow). Honors Bash compound-command deny segments.
+        """
+        deny_matches = match_rules_for_tool(tool.name, self.context.deny_rules, _pv(tool, params))
+        if not deny_matches and tool.name == "Bash":
+            from permissions.bash_security import split_and_normalize_command
+            for seg in split_and_normalize_command(params.get("command", "")):
+                seg_match = match_rules_for_tool("Bash", self.context.deny_rules, seg)
+                if seg_match:
+                    deny_matches = seg_match
+                    break
+        if deny_matches:
+            return PermissionResult.deny(f"Denied by rule: {deny_matches[0]}", reason="rule:deny")
+
+        ask_matches = match_rules_for_tool(tool.name, self.context.ask_rules, _pv(tool, params))
+        if ask_matches:
+            return PermissionResult.ask(
+                f"Allow {tool.name}? (matched rule: {ask_matches[0]})", reason="rule:ask"
+            )
+        return None
+
     def _is_accept_edits_allowed(self, tool, params: dict) -> bool:
         """
         Check if tool is auto-allowed in accept_edits mode.
-        Claude Code: checkPermissionMode() in modeValidation.ts
         """
-        # File tools (Edit, Write) — check if in working directory
         path = getattr(tool, 'get_path', lambda p: None)(params)
         if path and path_in_working_directory(path, self.context.working_directories):
             return True
 
-        # Bash commands — check if command is in ACCEPT_EDITS_COMMANDS
         if tool.name == "Bash":
             command = params.get("command", "").strip()
             if command:
+                from permissions.bash_security import split_and_normalize_command
+                segments = split_and_normalize_command(command)
+                if not segments:
+                    return False
                 import shlex
-                try:
-                    tokens = shlex.split(command)
-                    base_cmd = tokens[0].split("/")[-1] if tokens else ""
-                    if base_cmd in ACCEPT_EDITS_COMMANDS:
-                        return True
-                except ValueError:
-                    pass
+                for seg in segments:
+                    try:
+                        tokens = shlex.split(seg)
+                    except ValueError:
+                        return False
+                    base = tokens[0].split("/")[-1] if tokens else ""
+                    if base not in ACCEPT_EDITS_COMMANDS:
+                        return False
+                return True
 
         return False
 

@@ -1,10 +1,22 @@
 import asyncio
+import re
 from typing import Any
 
 from config.config import Config
 from tools.mcp.client import MCPClient, MCPServerStatus
 from tools.mcp.mcp_tool import MCPTool
 from tools.registry import ToolRegistry
+
+
+def _normalize_name_for_mcp(name: str) -> str:
+    """Replace chars outside [A-Za-z0-9_-] with _ so
+    the qualified tool name satisfies the API name pattern ^[A-Za-z0-9_-]{1,64}$."""
+    return re.sub(r"[^A-Za-z0-9_-]", "_", name)
+
+
+def _build_mcp_tool_name(server: str, tool: str) -> str:
+    """buildMcpToolName: mcp__<server>__<tool> with both parts normalized."""
+    return f"mcp__{_normalize_name_for_mcp(server)}__{_normalize_name_for_mcp(tool)}"
 
 
 class MCPManager:
@@ -56,7 +68,7 @@ class MCPManager:
                     tool_info=tool_info,
                     client=client,
                     config=self.config,
-                    name=f"{client.name}__{tool_info.name}",
+                    name=_build_mcp_tool_name(client.name, tool_info.name),
                 )
                 registry.register_mcp_tool(mcp_tool)
                 count += 1
@@ -82,3 +94,14 @@ class MCPManager:
             servers.append(server_info)
 
         return servers
+
+    def get_server_instructions(self) -> list[tuple[str, str]]:
+        """(name, instructions) for each CONNECTED server that provided usage
+        instructions — fed into the system prompt's MCP-instructions section
+."""
+        from tools.mcp.client import MCPServerStatus
+        out: list[tuple[str, str]] = []
+        for name, client in self._clients.items():
+            if client.status == MCPServerStatus.CONNECTED and client.instructions:
+                out.append((name, client.instructions))
+        return out

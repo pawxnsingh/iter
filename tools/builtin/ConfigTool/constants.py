@@ -1,3 +1,3 @@
-"""Mirrors Claude Code src/tools/ConfigTool/constants.ts."""
+"""Config tool constants."""
 
 CONFIG_TOOL_NAME = "Config"

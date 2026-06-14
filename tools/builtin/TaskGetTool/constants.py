@@ -1,3 +1,3 @@
-"""Mirrors Claude Code src/tools/TaskGetTool/constants.ts."""
+"""TaskGet tool constants."""
 
 TASK_GET_TOOL_NAME = "TaskGet"

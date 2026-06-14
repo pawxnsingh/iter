@@ -30,11 +30,10 @@ def test_azure_request_model_uses_deployment_name(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-5.2")
 
     config = Config()
-    config.model_name = "gpt-5.2-chat"  # model id != deployment name
+    config.model_name = "gpt-5.2-chat"
     client = LLMClient(config)
 
     assert client._provider == "azure"
-    # The request model MUST be the deployment, not the (different) model id.
     assert client._request_model() == "gpt-5.2"
 
 
@@ -43,7 +42,6 @@ def test_azure_falls_back_to_model_name_when_no_deployment(
 ) -> None:
     _clear_provider_env(monkeypatch)
     monkeypatch.setenv("AZURE_OPENAI_API_KEY", "k")
-    # No AZURE_OPENAI_DEPLOYMENT_NAME set.
 
     config = Config()
     config.model_name = "gpt-5.2-chat"
@@ -57,7 +55,6 @@ def test_openai_ignores_deployment_name(monkeypatch: pytest.MonkeyPatch) -> None
     _clear_provider_env(monkeypatch)
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "k")
-    # A stray deployment var must NOT leak into the OpenAI model id.
     monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-5.2")
 
     config = Config()

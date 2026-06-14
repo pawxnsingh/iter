@@ -1,8 +1,4 @@
-"""
-TaskCreateTool prompt — derived from Claude Code
-src/tools/TaskCreateTool/prompt.ts getPrompt() (without the
-isAgentSwarmsEnabled() teammate sections we don't have).
-"""
+"""TaskCreate tool prompt (teammate sections omitted — no swarm support)."""
 
 DESCRIPTION = "Create a new task in the task list"
 

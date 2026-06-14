@@ -1,4 +1,4 @@
-"""FileRead CC parity: .ipynb returns cells with outputs; pages param accepted."""
+"""FileRead parity:.ipynb returns cells with outputs; pages param accepted."""
 import asyncio
 import json
 import tempfile

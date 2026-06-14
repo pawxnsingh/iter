@@ -1,10 +1,9 @@
 """
 Multi-provider LLM client.
 
-Supports: Azure OpenAI, OpenAI, Anthropic (Claude).
+Supports: Azure OpenAI, OpenAI, Anthropic.
 Provider is configured via config or environment variables.
 
-Claude Code equivalent: src/services/api/claude.ts
 """
 
 from __future__ import annotations
@@ -38,12 +37,12 @@ class ErrorKind(str, Enum):
     support stays clean.
     """
 
-    PROMPT_TOO_LONG = "prompt_too_long"          # 413 / context_length_exceeded
-    MAX_OUTPUT_TOKENS = "max_output_tokens"       # output truncated mid-response
-    OVERLOADED = "overloaded"                     # 529 / rate-limited / capacity
-    AUTH = "auth"                                 # 401 / 403
-    INVALID_REQUEST = "invalid_request"           # 400 / schema error
-    SERVER_ERROR = "server_error"                 # 5xx generic
+    PROMPT_TOO_LONG = "prompt_too_long"
+    MAX_OUTPUT_TOKENS = "max_output_tokens"
+    OVERLOADED = "overloaded"
+    AUTH = "auth"
+    INVALID_REQUEST = "invalid_request"
+    SERVER_ERROR = "server_error"
     OTHER = "other"
 
 
@@ -56,41 +55,35 @@ def classify_error(exc_or_msg: Exception | str) -> ErrorKind:
     """
     text = str(exc_or_msg).lower()
 
-    # Prompt-too-long indicators across providers
     if any(s in text for s in (
         "prompt is too long", "context_length_exceeded", "context length",
         "maximum context length", "input is too long", "413",
     )):
         return ErrorKind.PROMPT_TOO_LONG
 
-    # Output-truncated indicators
     if any(s in text for s in (
         "max output tokens", "max_tokens", "output token limit",
         "max_output_tokens",
     )):
         return ErrorKind.MAX_OUTPUT_TOKENS
 
-    # Overloaded / capacity / rate-limited
     if any(s in text for s in (
         "overloaded", "529", "rate_limit", "rate limit", "too many requests",
         "capacity", "503",
     )):
         return ErrorKind.OVERLOADED
 
-    # Auth
     if any(s in text for s in (
         "unauthorized", "401", "forbidden", "403", "invalid api key",
         "authentication",
     )):
         return ErrorKind.AUTH
 
-    # Invalid request
     if any(s in text for s in (
         "invalid request", "400", "bad request", "validation",
     )):
         return ErrorKind.INVALID_REQUEST
 
-    # Generic 5xx
     if any(s in text for s in ("500", "502", "504", "server error")):
         return ErrorKind.SERVER_ERROR
 
@@ -102,7 +95,49 @@ def _sanitize_error(msg: str) -> str:
     import re
     msg = re.sub(r'(sk-[a-zA-Z0-9]{20,})', 'sk-***', msg)
     msg = re.sub(r'(key|token|secret|password)[\s=:]+\S+', r'\1=***', msg, flags=re.IGNORECASE)
-    return msg[:500]  # Truncate long errors
+    return msg[:500]
+
+
+_RETRYABLE_STATUSES = frozenset({408, 409, 429})
+
+
+def _should_retry_request(e: Exception) -> tuple[bool, float | None]:
+    """Decide whether an API error is retryable, and any retry-after delay.
+
+    Mirrors shouldRetry: retry on 408/409/429, any 5xx (incl. 529 overloaded),
+    and connection/timeout errors. The previous substring-only check
+    ('rate'+'limit') missed 500/502/503/529/overloaded entirely.
+    """
+    status = getattr(e, "status_code", None)
+    if status is None:
+        resp = getattr(e, "response", None)
+        status = getattr(resp, "status_code", None)
+
+    s = str(e).lower()
+    should = False
+    if isinstance(status, int) and (status in _RETRYABLE_STATUSES or status >= 500):
+        should = True
+    elif (
+        "overloaded" in s
+        or "529" in s
+        or ("rate" in s and "limit" in s)
+        or "connection" in s
+        or "timeout" in s
+        or "temporarily unavailable" in s
+    ):
+        should = True
+
+    retry_after: float | None = None
+    resp = getattr(e, "response", None)
+    headers = getattr(resp, "headers", None)
+    if headers is not None and hasattr(headers, "get"):
+        ra = headers.get("retry-after")
+        if ra:
+            try:
+                retry_after = float(ra)
+            except (TypeError, ValueError):
+                retry_after = None
+    return should, retry_after
 
 
 class LLMClient:
@@ -110,26 +145,26 @@ class LLMClient:
     Multi-provider LLM client with retry logic.
 
     Detects provider from config/env:
-      - ANTHROPIC_API_KEY → Anthropic (Claude)
+      - ANTHROPIC_API_KEY → Anthropic
       - OPENAI_API_KEY → OpenAI
       - AZURE_OPENAI_API_KEY → Azure OpenAI
     """
 
     def __init__(self, config: Config) -> None:
         self._client = None
-        self._max_retries = 3
+        self._max_retries = 10
+        self._max_overload_before_fallback = 3
+        self._fallback_active = False
         self.config = config
         self._provider = self._detect_provider()
         logger.info(f"LLM provider: {self._provider}")
 
     def _detect_provider(self) -> str:
         """Detect which LLM provider to use."""
-        # Explicit config override
         provider = os.environ.get("LLM_PROVIDER", "").lower()
         if provider in ("anthropic", "openai", "azure"):
             return provider
 
-        # Auto-detect from available keys
         if os.environ.get("ANTHROPIC_API_KEY"):
             return "anthropic"
         if os.environ.get("OPENAI_API_KEY"):
@@ -137,7 +172,6 @@ class LLMClient:
         if os.environ.get("AZURE_OPENAI_API_KEY"):
             return "azure"
 
-        # Fallback
         return "azure"
 
     def _request_model(self) -> str:
@@ -148,6 +182,8 @@ class LLMClient:
         config model name on Azure 404s as DeploymentNotFound. OpenAI routes by
         model id, so it keeps using the config model name.
         """
+        if getattr(self, "_fallback_active", False) and self.config.fallback_model:
+            return self.config.fallback_model
         if self._provider == "azure" and self.config.azure_deployment:
             return self.config.azure_deployment
         return self.config.model_name
@@ -195,6 +231,7 @@ class LLMClient:
         Yields StreamEvent objects for real-time streaming.
         Includes retry logic with exponential backoff.
         """
+        overload_count = 0
         for attempt in range(self._max_retries + 1):
             try:
                 if self._provider == "anthropic":
@@ -206,18 +243,31 @@ class LLMClient:
                 return
 
             except Exception as e:
-                error_str = str(e).lower()
-                is_rate_limit = "rate" in error_str and "limit" in error_str
-                is_connection = "connection" in error_str
+                should_retry, retry_after = _should_retry_request(e)
 
-                if (is_rate_limit or is_connection) and attempt < self._max_retries:
-                    wait_time = 2 ** attempt
+                s = str(e).lower()
+                if "overloaded" in s or "529" in s or getattr(e, "status_code", None) == 529:
+                    overload_count += 1
+                    if (
+                        overload_count >= self._max_overload_before_fallback
+                        and self.config.fallback_model
+                        and not self._fallback_active
+                    ):
+                        self._fallback_active = True
+                        logger.warning(
+                            f"Primary model overloaded {overload_count}x — "
+                            f"switching to fallback model {self.config.fallback_model}"
+                        )
+
+                if should_retry and attempt < self._max_retries:
+                    if retry_after is not None:
+                        wait_time = retry_after
+                    else:
+                        import random
+                        base = min(0.5 * (2 ** attempt), 32.0)
+                        wait_time = base + random.random() * 0.25 * base
                     logger.warning(f"Retrying in {wait_time}s (attempt {attempt + 1}): {type(e).__name__}")
                     await asyncio.sleep(wait_time)
-                    # CRITICAL: On retry, we restart the full stream.
-                    # Any events already yielded in this attempt are partial/incomplete.
-                    # The caller must handle potential duplicate partial content on retry.
-                    # We yield a retry marker so the caller can reset state if needed.
                     yield StreamEvent(
                         type=StreamEventType.ERROR,
                         error=f"__RETRY_RESET__:attempt={attempt + 1}",
@@ -229,7 +279,6 @@ class LLMClient:
                     )
                     return
 
-    # ── OpenAI / Azure OpenAI streaming ─────────────────────────────
 
     async def _openai_stream(
         self,
@@ -239,8 +288,6 @@ class LLMClient:
     ) -> AsyncGenerator[StreamEvent, None]:
         """Stream from OpenAI or Azure OpenAI."""
         client = self._get_client()
-        # OpenAI/Azure don't honor the Anthropic cache marker — strip it so the
-        # model never sees the internal sentinel.
         messages = _strip_dynamic_boundary(messages)
         kwargs: dict[str, Any] = {
             "messages": messages,
@@ -248,10 +295,6 @@ class LLMClient:
             "stream": stream,
         }
 
-        # OpenAI/Azure omit usage from streamed responses unless explicitly
-        # requested. Without this, every streamed turn reports usage=None and
-        # token accounting (task budget + compaction thresholds) silently falls
-        # back to a crude estimate that ignores prompt tokens entirely.
         if stream:
             kwargs["stream_options"] = {"include_usage": True}
 
@@ -321,9 +364,6 @@ class LLMClient:
                     if idx not in tool_calls:
                         tool_calls[idx] = {"id": "", "name": "", "arguments": "", "started": False}
 
-                    # The id can arrive in a different chunk than the name and
-                    # may be split/late — always merge it when present (don't
-                    # only set it on first-see), so the call_id is never stale.
                     if tc_delta.id:
                         tool_calls[idx]["id"] = tc_delta.id
 
@@ -333,8 +373,6 @@ class LLMClient:
                         if tc_delta.function.arguments:
                             tool_calls[idx]["arguments"] += tc_delta.function.arguments
 
-                    # Emit TOOL_CALL_START once, after we have both a name and
-                    # an id, so the start event carries a correct call_id.
                     if (not tool_calls[idx]["started"]
                             and tool_calls[idx]["name"]
                             and tool_calls[idx]["id"]):
@@ -349,12 +387,8 @@ class LLMClient:
 
         import uuid as _uuid
         for idx, tc in tool_calls.items():
-            # Guarantee a call_id even if the provider never sent one (some
-            # omit it); a missing id would orphan the tool_result.
             if not tc["id"]:
                 tc["id"] = f"call_{_uuid.uuid4().hex[:24]}"
-            # If START never fired (e.g. id only arrived at the very end),
-            # emit it now so the UI/loop sees a start before the completion.
             if not tc.get("started"):
                 yield StreamEvent(
                     type=StreamEventType.TOOL_CALL_START,
@@ -413,19 +447,15 @@ class LLMClient:
             usage=token_usage,
         )
 
-    # ── Anthropic (Claude) streaming ─────────────────────────────────
 
     async def _anthropic_stream(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
     ) -> AsyncGenerator[StreamEvent, None]:
-        """Stream from Anthropic Claude API."""
+        """Stream from the Anthropic API."""
         client = self._get_client()
 
-        # Separate system message from conversation, then remap OpenAI-shaped
-        # tool messages to Anthropic's block format (tool_calls → tool_use,
-        # tool role → user message with tool_result blocks).
         system_content = ""
         oai_conversation = []
         for msg in messages:
@@ -435,8 +465,6 @@ class LLMClient:
                 oai_conversation.append(_remap_image_blocks_for_anthropic(msg))
         conversation = _remap_conversation_for_anthropic(oai_conversation)
 
-        # Build Anthropic tools format. Last tool gets cache_control so the
-        # whole tools array is cached as a unit (CC parity: claude.ts:603).
         anthropic_tools = []
         if tools:
             for tool in tools:
@@ -445,28 +473,21 @@ class LLMClient:
                     "description": tool.get("description", ""),
                     "input_schema": tool.get("parameters", {"type": "object", "properties": {}}),
                 })
-            anthropic_tools[-1]["cache_control"] = {"type": "ephemeral"}
 
-        # Last content block of the latest user message gets cache_control too
-        # (CC parity: claude.ts:613-617). This caches the message history up to
-        # but not including the current turn.
         conversation = _add_message_cache_breakpoint(conversation)
 
-        # max_tokens: prefer an explicit config value, else a model-aware
-        # default. 8192 silently truncated long outputs on Opus/Sonnet (which
-        # support far more); 32k is a safe, generous cap. CC adjusts this
-        # dynamically and on context-overflow; we expose it via config.
         max_out = getattr(self.config, "max_output_tokens", None) or 32_000
+        anthropic_model = (
+            self.config.fallback_model
+            if self._fallback_active and self.config.fallback_model
+            else self.config.model_name
+        )
         kwargs: dict[str, Any] = {
-            "model": self.config.model_name,
+            "model": anthropic_model,
             "max_tokens": max_out,
             "messages": conversation,
         }
         if system_content:
-            # Split at the dynamic-boundary marker and cache the static prefix.
-            # The prefix block (everything before the boundary) is the same
-            # across turns until tools/output-style change, so caching it
-            # gives ~90% input-token discount on Anthropic's prompt cache.
             kwargs["system"] = _build_anthropic_system_blocks(system_content)
         if anthropic_tools:
             kwargs["tools"] = anthropic_tools
@@ -520,15 +541,16 @@ class LLMClient:
                 elif event.type == "message_stop":
                     pass
 
-            # Get final message for usage. Include cache-read tokens (CC tracks
-            # cache_read_input_tokens for cost/threshold accounting).
             final = await stream.get_final_message()
-            cached = getattr(final.usage, "cache_read_input_tokens", 0) or 0
+            cache_read = getattr(final.usage, "cache_read_input_tokens", 0) or 0
+            cache_creation = getattr(final.usage, "cache_creation_input_tokens", 0) or 0
+            input_total = final.usage.input_tokens + cache_creation + cache_read
             usage = TokenUsage(
-                prompt_tokens=final.usage.input_tokens,
+                prompt_tokens=input_total,
                 completion_tokens=final.usage.output_tokens,
-                total_tokens=final.usage.input_tokens + final.usage.output_tokens,
-                cached_tokens=cached,
+                total_tokens=input_total + final.usage.output_tokens,
+                cached_tokens=cache_read,
+                cache_creation_tokens=cache_creation,
             )
 
             yield StreamEvent(
@@ -541,7 +563,7 @@ class LLMClient:
 def _build_anthropic_system_blocks(system_content: str) -> Any:
     """
     Split the assembled system prompt at DYNAMIC_BOUNDARY and emit cache_control
-    on the static prefix block. Mirrors CC's cache-scope:'global' behavior.
+    on the static prefix block. Mirrors the cache-scope:'global' behavior.
 
     Returns:
       - list[dict] of text blocks when the marker is present
@@ -577,16 +599,14 @@ def _add_message_cache_breakpoint(messages: list[dict[str, Any]]) -> list[dict[s
     the system-prompt prefix and tools-array breakpoints, this gives the
     history-up-to-current-turn cache layer.
 
-    Mirrors CC's userMessageToMessageParam (claude.ts:595-620). If the last
-    message isn't a user message, no-op (we only seed the breakpoint on the
-    user side; the next turn will re-seed it on the next user message).
+    The breakpoint goes on the LAST message regardless of role. Seeding it
+    only on user messages loses the cache write whenever a turn ends on an
+    assistant message.
     """
     if not messages:
         return messages
     out = [dict(m) for m in messages]
     last = out[-1]
-    if last.get("role") != "user":
-        return out
 
     content = last.get("content")
     if isinstance(content, str):
@@ -595,7 +615,6 @@ def _add_message_cache_breakpoint(messages: list[dict[str, Any]]) -> list[dict[s
             "cache_control": {"type": "ephemeral"},
         }]
     elif isinstance(content, list) and content:
-        # Clone the list + last block so we don't mutate the caller's data
         new_content = list(content)
         last_block = dict(new_content[-1])
         last_block["cache_control"] = {"type": "ephemeral"}
@@ -646,8 +665,6 @@ def _remap_conversation_for_anthropic(messages: list[dict[str, Any]]) -> list[di
                 "tool_use_id": msg.get("tool_call_id", ""),
                 "content": msg.get("content", ""),
             }
-            # Merge into the previous user message if it's already a tool_result
-            # batch (Anthropic wants all results for a turn in one user message).
             if (out and out[-1]["role"] == "user"
                     and isinstance(out[-1].get("content"), list)
                     and out[-1]["content"]
@@ -683,7 +700,6 @@ def _remap_image_blocks_for_anthropic(msg: dict[str, Any]) -> dict[str, Any]:
                     "type": "image",
                     "source": {"type": "base64", "media_type": media_type, "data": data},
                 })
-            # else: skip malformed image block
         else:
             new_blocks.append(block)
     return {**msg, "content": new_blocks}
@@ -703,7 +719,6 @@ def _strip_dynamic_boundary(messages: list[dict[str, Any]]) -> list[dict[str, An
             and DYNAMIC_BOUNDARY in msg["content"]
         ):
             cleaned = msg["content"].replace(DYNAMIC_BOUNDARY, "").strip()
-            # Collapse the double blank line left by the boundary's surrounding "\n\n".
             cleaned = cleaned.replace("\n\n\n\n", "\n\n")
             out.append({**msg, "content": cleaned})
         else:

@@ -1,6 +1,5 @@
 """
-ExitWorktreeTool prompt — verbatim from Claude Code
-src/tools/ExitWorktreeTool/prompt.ts.
+ExitWorktreeTool prompt.
 """
 
 EXIT_WORKTREE_TOOL_PROMPT = """Exit a worktree session created by EnterWorktree and return the session to the original working directory.

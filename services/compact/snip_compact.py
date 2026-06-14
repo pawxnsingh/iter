@@ -1,8 +1,6 @@
 """
 Snip compact: Remove oldest messages entirely to free tokens.
 
-Source: Claude Code src/services/compact/snipCompact.ts (HISTORY_SNIP feature)
-
 This is the cheapest compaction after microcompact. Instead of summarizing,
 it simply removes the oldest message groups. Runs BEFORE microcompact in
 the query loop.
@@ -25,7 +23,6 @@ from services.compact.auto_compact import (
 
 logger = logging.getLogger(__name__)
 
-# Keep at least this many message groups after snipping
 MIN_GROUPS_TO_KEEP = 4
 
 
@@ -46,7 +43,6 @@ def snip_compact_if_needed(
     if current_tokens < threshold:
         return messages
 
-    # Group messages by turns (user + assistant + tool results = one group)
     groups = _group_by_turn(messages)
 
     if len(groups) <= MIN_GROUPS_TO_KEEP:
@@ -73,7 +69,6 @@ def snip_compact_if_needed(
             f"Snip compact: dropped {groups_dropped} groups, freed {tokens_freed} tokens"
         )
 
-    # Flatten groups back to message list
     result = []
     for group in groups:
         result.extend(group)

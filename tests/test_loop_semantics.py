@@ -1,4 +1,4 @@
-"""Core query-loop semantics (CC parity): parallel tool calls + no orphan results."""
+"""Core query-loop semantics: parallel tool calls + no orphan results."""
 import asyncio
 import tempfile
 from pathlib import Path

@@ -36,11 +36,6 @@ class _Harness:
         return _App()
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# DiffView
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def test_parse_unified_diff_basic() -> None:
     from ui.widgets.diff_view import parse_unified_diff
 
@@ -110,11 +105,6 @@ async def test_diff_view_split_mode_mounts_two_panes() -> None:
         assert dv.has_class("-split")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# FuzzySearch
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 def test_fuzzy_search_exact_match() -> None:
     from ui.fuzzy import FuzzySearch
 
@@ -149,11 +139,6 @@ def test_fuzzy_search_case_insensitive_default() -> None:
     assert score > 0
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# FuzzyIndex
-# ═══════════════════════════════════════════════════════════════════════════
-
-
 @pytest.mark.asyncio
 async def test_fuzzy_index_search_finds_matches() -> None:
     from ui.fuzzy_index import FuzzyIndex
@@ -177,13 +162,7 @@ async def test_fuzzy_index_short_query() -> None:
     idx = FuzzyIndex()
     await idx.update_paths(["a.py", "ab.py", "abc.py", "xyz.py"])
     results = await idx.search("a")
-    # Single-char query returns paths starting with the char
     assert any(r.startswith("a") for r in results)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# PathSearch overlay (lightweight — no full integration)
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.asyncio
@@ -201,25 +180,14 @@ async def test_path_search_open_filter_render(tmp_path: Path) -> None:
     app = _Harness.make_app(ps)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        # Wait for the path-scan worker to populate
         for _ in range(40):
             await pilot.pause(0.05)
             if ps.paths:
                 break
         assert ps.paths
 
-        # The OptionList should have at least the scanned files
         olist = ps.query_one(OptionList)
         assert olist.option_count >= 1
-
-
-# CommandEditModal tests removed alongside the screen file (dead code).
-# Restore both when the bash-tool-edit safety flow is actually wired.
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# SessionResumeModal
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.asyncio
@@ -250,9 +218,6 @@ async def test_session_resume_modal_no_sessions() -> None:
             await pilot.pause(0.02)
             if isinstance(app.screen, SessionResumeModal):
                 break
-        # Modal mounts with "No previous sessions" notice. Static's text
-        # lives in `.renderable` on this Textual version; fall back to
-        # str(rendered) if a future version moves it.
         def _text(w) -> str:
             for attr in ("renderable", "_content"):
                 v = getattr(w, attr, None)
@@ -281,11 +246,6 @@ def test_session_resume_friendly_time_ago() -> None:
     assert friendly_time_ago(now.isoformat()) == "just now"
     assert "minute" in friendly_time_ago((now - timedelta(minutes=5)).isoformat())
     assert "hour" in friendly_time_ago((now - timedelta(hours=3)).isoformat())
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# PermissionsScreen
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.asyncio
@@ -318,7 +278,7 @@ async def test_permissions_screen_allow_always() -> None:
             await pilot.pause(0.02)
             if isinstance(app.screen, PermissionsScreen):
                 break
-        await pilot.press("A")  # capital = allow_always
+        await pilot.press("A")
         for _ in range(40):
             await pilot.pause(0.02)
             if "value" in result:
@@ -361,7 +321,6 @@ async def test_permissions_screen_with_diff() -> None:
             await pilot.pause(0.02)
             if isinstance(app.screen, PermissionsScreen):
                 break
-        # Diff is mounted
         assert list(app.screen.query(DiffView))
         await pilot.press("r")
         for _ in range(40):
@@ -369,11 +328,6 @@ async def test_permissions_screen_with_diff() -> None:
             if "value" in result:
                 break
         assert result.get("value") == "reject_once"
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Prompt @ key opens path search
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.asyncio
@@ -416,5 +370,4 @@ async def test_insert_path_message_replaces_at_in_prompt() -> None:
             await pilot.pause(0.02)
             if "src/foo.py" in ta.text:
                 break
-        # The trailing '@' is replaced by the path
         assert ta.text == "look at src/foo.py"
