@@ -1,12 +1,12 @@
-import logging
 from pathlib import Path
 from typing import Any
 
 from config.config import Config
 from tools.base import Tool, ToolInvocation, ToolResult, truncate_tool_result
 from tools.builtin import get_all_builtin_tools
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ToolRegistry:

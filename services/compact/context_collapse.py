@@ -18,16 +18,15 @@ Collapse levels:
 
 from __future__ import annotations
 
-import logging
-
 from context.manager import MessageItem
 from services.compact.auto_compact import (
     estimate_messages_tokens,
     get_auto_compact_threshold,
 )
+from utils.logger import get_logger
 from utils.text import estimate_token
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 COLLAPSE_TARGET_RATIO = 0.90
 
@@ -81,18 +80,22 @@ def _collapse_tool_results(
         if i < boundary and msg.role == "tool" and len(msg.content) > 200:
             first_line = msg.content.split("\n")[0][:100]
             collapsed_content = f"[Tool result collapsed: {first_line}...]"
-            result.append(MessageItem(
-                role=msg.role,
-                content=collapsed_content,
-                tool_call_id=msg.tool_call_id,
-                tool_calls=msg.tool_calls,
-                token_count=estimate_token(collapsed_content),
-                turn_number=msg.turn_number,
-            ))
+            result.append(
+                MessageItem(
+                    role=msg.role,
+                    content=collapsed_content,
+                    tool_call_id=msg.tool_call_id,
+                    tool_calls=msg.tool_calls,
+                    token_count=estimate_token(collapsed_content),
+                    turn_number=msg.turn_number,
+                )
+            )
         else:
             result.append(msg)
 
-    freed = estimate_messages_tokens(messages, model) - estimate_messages_tokens(result, model)
+    freed = estimate_messages_tokens(messages, model) - estimate_messages_tokens(
+        result, model
+    )
     if freed > 0:
         logger.debug(f"Context collapse phase 1: freed {freed} tokens")
 
@@ -118,13 +121,15 @@ def _collapse_assistant_messages(
         if i < boundary and msg.role == "assistant" and len(msg.content) > 500:
             summary = msg.content[:200].rsplit(".", 1)[0] + "."
             collapsed = f"[Earlier response collapsed] {summary}"
-            result.append(MessageItem(
-                role=msg.role,
-                content=collapsed,
-                tool_calls=msg.tool_calls,
-                token_count=estimate_token(collapsed),
-                turn_number=msg.turn_number,
-            ))
+            result.append(
+                MessageItem(
+                    role=msg.role,
+                    content=collapsed,
+                    tool_calls=msg.tool_calls,
+                    token_count=estimate_token(collapsed),
+                    turn_number=msg.turn_number,
+                )
+            )
         else:
             result.append(msg)
 

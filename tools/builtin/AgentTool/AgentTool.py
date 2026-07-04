@@ -14,7 +14,6 @@ Supports:
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -24,12 +23,13 @@ from tools.base import Tool, ToolInvocation, ToolKind, ToolResult
 from tools.builtin.AgentTool.built_in import BUILT_IN_AGENTS
 from tools.builtin.AgentTool.built_in_types import AgentDefinition
 from tools.builtin.AgentTool.prompt import AGENT_PROMPT
+from utils.logger import get_logger
 
 _ALL_AGENT_DISALLOWED_TOOLS = frozenset(
     {"EnterPlanMode", "ExitPlanMode", "Agent", "AskUserQuestion", "TaskStop"}
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AgentToolParams(BaseModel):
@@ -88,7 +88,10 @@ class AgentTool(Tool):
             return await self._run_foreground(params, definition, invocation)
 
     async def _run_foreground(
-        self, params: AgentToolParams, definition: AgentDefinition, invocation: ToolInvocation,
+        self,
+        params: AgentToolParams,
+        definition: AgentDefinition,
+        invocation: ToolInvocation,
         agent_id: str | None = None,
     ) -> ToolResult:
         """Run agent synchronously and return result."""
@@ -103,6 +106,7 @@ class AgentTool(Tool):
         config_dict["max_turns"] = definition.max_turns
 
         from tools.registry import create_default_registry
+
         all_names = [t.name for t in create_default_registry(self.config).get_tools()]
         if definition.tools and definition.tools != ["*"]:
             base_allowed = list(definition.tools)
@@ -126,6 +130,7 @@ class AgentTool(Tool):
         last_text = ""
 
         from hooks.config import get_hooks_from_snapshot, swap_hooks_snapshot
+
         parent_snapshot = get_hooks_from_snapshot()
 
         try:
@@ -142,6 +147,7 @@ class AgentTool(Tool):
 
                 async for event in agent.run(task_prompt):
                     from agent.event import AgentEventType
+
                     if event.type == AgentEventType.TEXT_COMPLETE:
                         text = event.data.get("content", "")
                         if text:
@@ -155,12 +161,16 @@ class AgentTool(Tool):
 
         except Exception as e:
             swap_hooks_snapshot(parent_snapshot)
-            await self._fire_subagent_stop(agent_id, definition, last_assistant_message="")
+            await self._fire_subagent_stop(
+                agent_id, definition, last_assistant_message=""
+            )
             return ToolResult.error_result(f"Agent failed: {e}")
 
         swap_hooks_snapshot(parent_snapshot)
 
-        await self._fire_subagent_stop(agent_id, definition, last_assistant_message=last_text)
+        await self._fire_subagent_stop(
+            agent_id, definition, last_assistant_message=last_text
+        )
 
         result_text = last_text or "Agent completed with no output."
 
@@ -170,7 +180,10 @@ class AgentTool(Tool):
         )
 
     async def _run_background(
-        self, params: AgentToolParams, definition: AgentDefinition, invocation: ToolInvocation
+        self,
+        params: AgentToolParams,
+        definition: AgentDefinition,
+        invocation: ToolInvocation,
     ) -> ToolResult:
         """Launch agent in background and return immediately."""
         import uuid
@@ -184,7 +197,9 @@ class AgentTool(Tool):
 
         async def _run():
             try:
-                result = await self._run_foreground(params, definition, invocation, agent_id=task_id)
+                result = await self._run_foreground(
+                    params, definition, invocation, agent_id=task_id
+                )
                 set_background_result(task_id, result.output)
             except Exception as e:
                 set_background_result(task_id, f"Background agent failed: {e}")
@@ -197,7 +212,6 @@ class AgentTool(Tool):
             f"Retrieve its result with the AgentResult tool once it finishes.",
             metadata={"task_id": task_id, "background": True},
         )
-
 
     def _hook_executor(self):
         """Build a HookExecutor from the frozen session snapshot.
@@ -214,7 +228,9 @@ class AgentTool(Tool):
             return None
         return HookExecutor(snapshot)
 
-    async def _fire_subagent_start(self, agent_id: str, definition: AgentDefinition) -> str:
+    async def _fire_subagent_start(
+        self, agent_id: str, definition: AgentDefinition
+    ) -> str:
         """Fire SubagentStart; return any additional context to prepend to the task."""
         from core_types.hooks import HookEvent
 
@@ -224,8 +240,11 @@ class AgentTool(Tool):
         try:
             result = await executor.run_event_hooks(
                 event=HookEvent.SUBAGENT_START.value,
-                data={"agent_id": agent_id, "agent_type": definition.agent_type,
-                      "cwd": str(self.config.cwd)},
+                data={
+                    "agent_id": agent_id,
+                    "agent_type": definition.agent_type,
+                    "cwd": str(self.config.cwd),
+                },
             )
             return result.additional_context or ""
         except Exception:
@@ -243,11 +262,14 @@ class AgentTool(Tool):
         try:
             await executor.run_event_hooks(
                 event=HookEvent.SUBAGENT_STOP.value,
-                data={"agent_id": agent_id, "agent_type": definition.agent_type,
-                      "last_assistant_message": last_assistant_message,
-                      "stop_hook_active": False,
-                      "agent_transcript_path": "",
-                      "cwd": str(self.config.cwd)},
+                data={
+                    "agent_id": agent_id,
+                    "agent_type": definition.agent_type,
+                    "last_assistant_message": last_assistant_message,
+                    "stop_hook_active": False,
+                    "agent_transcript_path": "",
+                    "cwd": str(self.config.cwd),
+                },
             )
         except Exception:
             logger.debug("SubagentStop hook failed", exc_info=True)

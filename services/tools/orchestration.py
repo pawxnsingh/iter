@@ -16,15 +16,15 @@ Max concurrency: 10
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from tools.base import Tool, ToolInvocation, ToolResult, truncate_tool_result
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 MAX_TOOL_USE_CONCURRENCY = int(os.environ.get("MAX_TOOL_USE_CONCURRENCY", "10"))
 
@@ -32,6 +32,7 @@ MAX_TOOL_USE_CONCURRENCY = int(os.environ.get("MAX_TOOL_USE_CONCURRENCY", "10"))
 @dataclass
 class ToolCallRequest:
     """A single tool call from the model."""
+
     call_id: str
     name: str
     arguments: dict[str, Any]
@@ -40,6 +41,7 @@ class ToolCallRequest:
 @dataclass
 class ToolCallResult:
     """Result from executing a tool call."""
+
     call_id: str
     name: str
     result: ToolResult
@@ -49,6 +51,7 @@ class ToolCallResult:
 @dataclass
 class Batch:
     """A group of tool calls that execute together."""
+
     is_concurrency_safe: bool
     calls: list[ToolCallRequest] = field(default_factory=list)
 
@@ -145,7 +148,9 @@ async def run_tools(
     batches = partition_tool_calls(calls, tools)
 
     def _aborted() -> bool:
-        return abort_controller is not None and getattr(abort_controller, "aborted", False)
+        return abort_controller is not None and getattr(
+            abort_controller, "aborted", False
+        )
 
     for batch in batches:
         if _aborted():
@@ -153,7 +158,9 @@ async def run_tools(
                 yield ToolCallResult(
                     call_id=call.call_id,
                     name=call.name,
-                    result=ToolResult.error_result("Tool execution interrupted by user"),
+                    result=ToolResult.error_result(
+                        "Tool execution interrupted by user"
+                    ),
                     arguments=call.arguments,
                 )
             continue
@@ -172,10 +179,14 @@ async def run_tools(
                         return ToolCallResult(
                             call_id=call.call_id,
                             name=call.name,
-                            result=ToolResult.error_result(f"Unknown tool: {call.name}"),
+                            result=ToolResult.error_result(
+                                f"Unknown tool: {call.name}"
+                            ),
                             arguments=call.arguments,
                         )
-                    return await execute_tool_call(call, tool, cwd, abort_controller, session_dir)
+                    return await execute_tool_call(
+                        call, tool, cwd, abort_controller, session_dir
+                    )
 
             tasks = [run_with_semaphore(call) for call in batch.calls]
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -203,4 +214,6 @@ async def run_tools(
                     continue
 
                 logger.debug(f"Running tool serially: {call.name}")
-                yield await execute_tool_call(call, tool, cwd, abort_controller, session_dir)
+                yield await execute_tool_call(
+                    call, tool, cwd, abort_controller, session_dir
+                )

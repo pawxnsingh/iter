@@ -8,16 +8,18 @@ A user cannot modify settings.json mid-session to inject hooks.
 from __future__ import annotations
 
 import copy
-import logging
 
 from core_types.hooks import HookCommand
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _snapshot: dict[str, list[HookCommand]] | None = None
 
 
-def capture_hooks_snapshot(hooks_config: dict[str, list[HookCommand]] | None = None) -> None:
+def capture_hooks_snapshot(
+    hooks_config: dict[str, list[HookCommand]] | None = None,
+) -> None:
     """
     Capture hooks config once at startup.
     captureHooksConfigSnapshot

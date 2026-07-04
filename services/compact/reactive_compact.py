@@ -14,13 +14,12 @@ Flow:
 
 from __future__ import annotations
 
-import logging
-
 from context.manager import MessageItem
 from services.compact.auto_compact import estimate_messages_tokens
+from utils.logger import get_logger
 from utils.text import count_tokens
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def try_reactive_compact(
@@ -50,6 +49,7 @@ async def try_reactive_compact(
             return None
 
         from services.compact.auto_compact import build_post_compact_messages
+
         compacted = build_post_compact_messages(messages, summary, transcript_path)
         post_tokens = estimate_messages_tokens(compacted)
 
@@ -77,19 +77,22 @@ def _strip_images(messages: list[MessageItem]) -> list[MessageItem]:
         if "[image]" in msg.content or "data:image" in msg.content:
             content = msg.content
             import re
+
             content = re.sub(
-                r'data:image/[^;]+;base64,[A-Za-z0-9+/=]+',
-                '[image]',
+                r"data:image/[^;]+;base64,[A-Za-z0-9+/=]+",
+                "[image]",
                 content,
             )
-            result.append(MessageItem(
-                role=msg.role,
-                content=content,
-                tool_call_id=msg.tool_call_id,
-                tool_calls=msg.tool_calls,
-                token_count=count_tokens(content),
-                turn_number=msg.turn_number,
-            ))
+            result.append(
+                MessageItem(
+                    role=msg.role,
+                    content=content,
+                    tool_call_id=msg.tool_call_id,
+                    tool_calls=msg.tool_calls,
+                    token_count=count_tokens(content),
+                    turn_number=msg.turn_number,
+                )
+            )
         else:
             result.append(msg)
     return result

@@ -13,8 +13,6 @@ Lifecycle hooks fired:
 
 from __future__ import annotations
 
-import logging
-
 from agent.event import AgentEvent
 from agent.session import Session
 from config.config import Config
@@ -24,8 +22,9 @@ from hooks.executor import HookExecutor
 from query.loop import query_loop
 from services.compact.compact import create_compact_fn
 from utils.abort import AbortController
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class Agent:
@@ -120,11 +119,13 @@ class Agent:
             get_default_permission_mode,
             load_settings,
         )
+
         settings = load_settings(str(self.config.cwd))
 
         apply_settings_env(settings)
 
         from core_types.permissions import PermissionMode
+
         default_mode = get_default_permission_mode(settings)
         if default_mode and self.config.permission_mode == PermissionMode.DEFAULT:
             self.config.permission_mode = default_mode
@@ -134,6 +135,7 @@ class Agent:
         capture_hooks_snapshot(hooks_config if hooks_config else None)
         self._hook_executor = HookExecutor(get_hooks_from_snapshot())
         from core_types.permissions import permission_mode_external
+
         transcript_path = ""
         if getattr(self.session, "storage", None) is not None:
             transcript_path = str(self.session.storage.path)
@@ -171,9 +173,14 @@ class Agent:
             build_user_context_reminder,
             load_all_instructions,
         )
+
         instructions = load_all_instructions(str(self.config.cwd))
-        _MEMORY_TYPE = {"managed": "Managed", "user": "User",
-                        "project": "Project", "local": "Local"}
+        _MEMORY_TYPE = {
+            "managed": "Managed",
+            "user": "User",
+            "project": "Project",
+            "local": "Local",
+        }
         for instr in instructions:
             await self._hook_executor.run_event_hooks(
                 event=HookEvent.INSTRUCTIONS_LOADED,
@@ -184,6 +191,7 @@ class Agent:
                 },
             )
         import datetime as _dt
+
         self._user_context_reminder = build_user_context_reminder(
             str(self.config.cwd), _dt.date.today().isoformat()
         )

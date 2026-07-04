@@ -14,10 +14,11 @@ Constants:
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 DEFAULT_MAX_RESULT_SIZE_CHARS = 50_000
 MAX_TOOL_RESULT_BYTES = 400_000

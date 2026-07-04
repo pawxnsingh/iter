@@ -9,7 +9,6 @@ Provider is configured via config or environment variables.
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 from enum import Enum
 from typing import Any, AsyncGenerator
@@ -25,8 +24,9 @@ from client.response import (
 )
 from config.config import Config
 from prompts.system import DYNAMIC_BOUNDARY
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ErrorKind(str, Enum):
@@ -55,33 +55,66 @@ def classify_error(exc_or_msg: Exception | str) -> ErrorKind:
     """
     text = str(exc_or_msg).lower()
 
-    if any(s in text for s in (
-        "prompt is too long", "context_length_exceeded", "context length",
-        "maximum context length", "input is too long", "413",
-    )):
+    if any(
+        s in text
+        for s in (
+            "prompt is too long",
+            "context_length_exceeded",
+            "context length",
+            "maximum context length",
+            "input is too long",
+            "413",
+        )
+    ):
         return ErrorKind.PROMPT_TOO_LONG
 
-    if any(s in text for s in (
-        "max output tokens", "max_tokens", "output token limit",
-        "max_output_tokens",
-    )):
+    if any(
+        s in text
+        for s in (
+            "max output tokens",
+            "max_tokens",
+            "output token limit",
+            "max_output_tokens",
+        )
+    ):
         return ErrorKind.MAX_OUTPUT_TOKENS
 
-    if any(s in text for s in (
-        "overloaded", "529", "rate_limit", "rate limit", "too many requests",
-        "capacity", "503",
-    )):
+    if any(
+        s in text
+        for s in (
+            "overloaded",
+            "529",
+            "rate_limit",
+            "rate limit",
+            "too many requests",
+            "capacity",
+            "503",
+        )
+    ):
         return ErrorKind.OVERLOADED
 
-    if any(s in text for s in (
-        "unauthorized", "401", "forbidden", "403", "invalid api key",
-        "authentication",
-    )):
+    if any(
+        s in text
+        for s in (
+            "unauthorized",
+            "401",
+            "forbidden",
+            "403",
+            "invalid api key",
+            "authentication",
+        )
+    ):
         return ErrorKind.AUTH
 
-    if any(s in text for s in (
-        "invalid request", "400", "bad request", "validation",
-    )):
+    if any(
+        s in text
+        for s in (
+            "invalid request",
+            "400",
+            "bad request",
+            "validation",
+        )
+    ):
         return ErrorKind.INVALID_REQUEST
 
     if any(s in text for s in ("500", "502", "504", "server error")):
@@ -93,8 +126,11 @@ def classify_error(exc_or_msg: Exception | str) -> ErrorKind:
 def _sanitize_error(msg: str) -> str:
     """Strip potential API keys/tokens from error messages."""
     import re
-    msg = re.sub(r'(sk-[a-zA-Z0-9]{20,})', 'sk-***', msg)
-    msg = re.sub(r'(key|token|secret|password)[\s=:]+\S+', r'\1=***', msg, flags=re.IGNORECASE)
+
+    msg = re.sub(r"(sk-[a-zA-Z0-9]{20,})", "sk-***", msg)
+    msg = re.sub(
+        r"(key|token|secret|password)[\s=:]+\S+", r"\1=***", msg, flags=re.IGNORECASE
+    )
     return msg[:500]
 
 
@@ -195,16 +231,19 @@ class LLMClient:
 
         if self._provider == "anthropic":
             from anthropic import AsyncAnthropic
+
             self._client = AsyncAnthropic(
                 api_key=os.environ.get("ANTHROPIC_API_KEY"),
             )
         elif self._provider == "openai":
             from openai import AsyncOpenAI
+
             self._client = AsyncOpenAI(
                 api_key=os.environ.get("OPENAI_API_KEY"),
             )
         elif self._provider == "azure":
             from openai import AsyncAzureOpenAI
+
             self._client = AsyncAzureOpenAI(
                 api_key=self.config.api_key,
                 azure_endpoint=self.config.base_url,
@@ -246,7 +285,11 @@ class LLMClient:
                 should_retry, retry_after = _should_retry_request(e)
 
                 s = str(e).lower()
-                if "overloaded" in s or "529" in s or getattr(e, "status_code", None) == 529:
+                if (
+                    "overloaded" in s
+                    or "529" in s
+                    or getattr(e, "status_code", None) == 529
+                ):
                     overload_count += 1
                     if (
                         overload_count >= self._max_overload_before_fallback
@@ -264,9 +307,12 @@ class LLMClient:
                         wait_time = retry_after
                     else:
                         import random
-                        base = min(0.5 * (2 ** attempt), 32.0)
+
+                        base = min(0.5 * (2**attempt), 32.0)
                         wait_time = base + random.random() * 0.25 * base
-                    logger.warning(f"Retrying in {wait_time}s (attempt {attempt + 1}): {type(e).__name__}")
+                    logger.warning(
+                        f"Retrying in {wait_time}s (attempt {attempt + 1}): {type(e).__name__}"
+                    )
                     await asyncio.sleep(wait_time)
                     yield StreamEvent(
                         type=StreamEventType.ERROR,
@@ -278,7 +324,6 @@ class LLMClient:
                         error=f"API error: {type(e).__name__}: {_sanitize_error(str(e))}",
                     )
                     return
-
 
     async def _openai_stream(
         self,
@@ -316,7 +361,9 @@ class LLMClient:
                 "function": {
                     "name": tool.get("name"),
                     "description": tool.get("description"),
-                    "parameters": tool.get("parameters", {"type": "object", "properties": {}}),
+                    "parameters": tool.get(
+                        "parameters", {"type": "object", "properties": {}}
+                    ),
                 },
             }
             for tool in tools
@@ -339,8 +386,10 @@ class LLMClient:
                     total_tokens=getattr(chunk.usage, "total_tokens", 0),
                     cached_tokens=getattr(
                         getattr(chunk.usage, "prompt_tokens_details", None),
-                        "cached_tokens", 0
-                    ) or 0,
+                        "cached_tokens",
+                        0,
+                    )
+                    or 0,
                 )
 
             if not chunk.choices:
@@ -362,7 +411,12 @@ class LLMClient:
                 for tc_delta in delta.tool_calls:
                     idx = tc_delta.index
                     if idx not in tool_calls:
-                        tool_calls[idx] = {"id": "", "name": "", "arguments": "", "started": False}
+                        tool_calls[idx] = {
+                            "id": "",
+                            "name": "",
+                            "arguments": "",
+                            "started": False,
+                        }
 
                     if tc_delta.id:
                         tool_calls[idx]["id"] = tc_delta.id
@@ -373,9 +427,11 @@ class LLMClient:
                         if tc_delta.function.arguments:
                             tool_calls[idx]["arguments"] += tc_delta.function.arguments
 
-                    if (not tool_calls[idx]["started"]
-                            and tool_calls[idx]["name"]
-                            and tool_calls[idx]["id"]):
+                    if (
+                        not tool_calls[idx]["started"]
+                        and tool_calls[idx]["name"]
+                        and tool_calls[idx]["id"]
+                    ):
                         tool_calls[idx]["started"] = True
                         yield StreamEvent(
                             type=StreamEventType.TOOL_CALL_START,
@@ -386,6 +442,7 @@ class LLMClient:
                         )
 
         import uuid as _uuid
+
         for idx, tc in tool_calls.items():
             if not tc["id"]:
                 tc["id"] = f"call_{_uuid.uuid4().hex[:24]}"
@@ -447,7 +504,6 @@ class LLMClient:
             usage=token_usage,
         )
 
-
     async def _anthropic_stream(
         self,
         messages: list[dict[str, Any]],
@@ -468,11 +524,15 @@ class LLMClient:
         anthropic_tools = []
         if tools:
             for tool in tools:
-                anthropic_tools.append({
-                    "name": tool["name"],
-                    "description": tool.get("description", ""),
-                    "input_schema": tool.get("parameters", {"type": "object", "properties": {}}),
-                })
+                anthropic_tools.append(
+                    {
+                        "name": tool["name"],
+                        "description": tool.get("description", ""),
+                        "input_schema": tool.get(
+                            "parameters", {"type": "object", "properties": {}}
+                        ),
+                    }
+                )
 
         conversation = _add_message_cache_breakpoint(conversation)
 
@@ -581,17 +641,21 @@ def _build_anthropic_system_blocks(system_content: str) -> Any:
 
     blocks: list[dict[str, Any]] = []
     if prefix:
-        blocks.append({
-            "type": "text",
-            "text": prefix,
-            "cache_control": {"type": "ephemeral"},
-        })
+        blocks.append(
+            {
+                "type": "text",
+                "text": prefix,
+                "cache_control": {"type": "ephemeral"},
+            }
+        )
     if suffix:
         blocks.append({"type": "text", "text": suffix})
     return blocks if blocks else system_content
 
 
-def _add_message_cache_breakpoint(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _add_message_cache_breakpoint(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """
     Add cache_control to the last content block of the latest user message.
 
@@ -610,10 +674,13 @@ def _add_message_cache_breakpoint(messages: list[dict[str, Any]]) -> list[dict[s
 
     content = last.get("content")
     if isinstance(content, str):
-        last["content"] = [{
-            "type": "text", "text": content,
-            "cache_control": {"type": "ephemeral"},
-        }]
+        last["content"] = [
+            {
+                "type": "text",
+                "text": content,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
     elif isinstance(content, list) and content:
         new_content = list(content)
         last_block = dict(new_content[-1])
@@ -623,7 +690,9 @@ def _add_message_cache_breakpoint(messages: list[dict[str, Any]]) -> list[dict[s
     return out
 
 
-def _remap_conversation_for_anthropic(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _remap_conversation_for_anthropic(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """Convert an OpenAI-shaped conversation to Anthropic's message format.
 
     OpenAI: assistant {content, tool_calls:[{id,function:{name,arguments}}]},
@@ -649,15 +718,19 @@ def _remap_conversation_for_anthropic(messages: list[dict[str, Any]]) -> list[di
                 fn = tc.get("function", {})
                 args = fn.get("arguments", "{}")
                 try:
-                    parsed = _json.loads(args) if isinstance(args, str) else (args or {})
+                    parsed = (
+                        _json.loads(args) if isinstance(args, str) else (args or {})
+                    )
                 except (ValueError, TypeError):
                     parsed = {}
-                blocks.append({
-                    "type": "tool_use",
-                    "id": tc.get("id", ""),
-                    "name": fn.get("name", ""),
-                    "input": parsed,
-                })
+                blocks.append(
+                    {
+                        "type": "tool_use",
+                        "id": tc.get("id", ""),
+                        "name": fn.get("name", ""),
+                        "input": parsed,
+                    }
+                )
             out.append({"role": "assistant", "content": blocks})
         elif role == "tool":
             tr_block = {
@@ -665,11 +738,14 @@ def _remap_conversation_for_anthropic(messages: list[dict[str, Any]]) -> list[di
                 "tool_use_id": msg.get("tool_call_id", ""),
                 "content": msg.get("content", ""),
             }
-            if (out and out[-1]["role"] == "user"
-                    and isinstance(out[-1].get("content"), list)
-                    and out[-1]["content"]
-                    and isinstance(out[-1]["content"][0], dict)
-                    and out[-1]["content"][0].get("type") == "tool_result"):
+            if (
+                out
+                and out[-1]["role"] == "user"
+                and isinstance(out[-1].get("content"), list)
+                and out[-1]["content"]
+                and isinstance(out[-1]["content"][0], dict)
+                and out[-1]["content"][0].get("type") == "tool_result"
+            ):
                 out[-1]["content"].append(tr_block)
             else:
                 out.append({"role": "user", "content": [tr_block]})
@@ -695,11 +771,17 @@ def _remap_image_blocks_for_anthropic(msg: dict[str, Any]) -> dict[str, Any]:
             url = block.get("image_url", {}).get("url", "")
             if url.startswith("data:") and ";base64," in url:
                 header, data = url.split(";base64,", 1)
-                media_type = header[len("data:"):] or "image/png"
-                new_blocks.append({
-                    "type": "image",
-                    "source": {"type": "base64", "media_type": media_type, "data": data},
-                })
+                media_type = header[len("data:") :] or "image/png"
+                new_blocks.append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": data,
+                        },
+                    }
+                )
         else:
             new_blocks.append(block)
     return {**msg, "content": new_blocks}

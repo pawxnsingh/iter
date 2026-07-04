@@ -20,15 +20,15 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import os
 import re
 from pathlib import Path
 from typing import Any
 
 from core_types.hooks import HookCommand, HookEvent, HookResult
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 DEFAULT_HOOK_TIMEOUT = 600
 SESSION_END_HOOK_TIMEOUT_SEC = 1.5
@@ -61,16 +61,31 @@ def _session_end_timeout_sec() -> float:
             pass
     return SESSION_END_HOOK_TIMEOUT_SEC
 
+
 _GHA_SUBPROCESS_SCRUB = (
-    "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN",
-    "ANTHROPIC_FOUNDRY_API_KEY", "ANTHROPIC_CUSTOM_HEADERS",
-    "OTEL_EXPORTER_OTLP_HEADERS", "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
-    "OTEL_EXPORTER_OTLP_METRICS_HEADERS", "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
-    "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_BEARER_TOKEN_BEDROCK",
-    "GOOGLE_APPLICATION_CREDENTIALS", "AZURE_CLIENT_SECRET",
-    "AZURE_CLIENT_CERTIFICATE_PATH", "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
-    "ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_RUNTIME_URL",
-    "ALL_INPUTS", "OVERRIDE_GITHUB_TOKEN", "DEFAULT_WORKFLOW_TOKEN", "SSH_SIGNING_KEY",
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_FOUNDRY_API_KEY",
+    "ANTHROPIC_CUSTOM_HEADERS",
+    "OTEL_EXPORTER_OTLP_HEADERS",
+    "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+    "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
+    "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_BEARER_TOKEN_BEDROCK",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "AZURE_CLIENT_SECRET",
+    "AZURE_CLIENT_CERTIFICATE_PATH",
+    "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+    "ACTIONS_ID_TOKEN_REQUEST_URL",
+    "ACTIONS_RUNTIME_TOKEN",
+    "ACTIONS_RUNTIME_URL",
+    "ALL_INPUTS",
+    "OVERRIDE_GITHUB_TOKEN",
+    "DEFAULT_WORKFLOW_TOKEN",
+    "SSH_SIGNING_KEY",
 )
 
 
@@ -149,7 +164,9 @@ def _parse_hook_json(data: dict) -> HookResult:
     additional = data.get("additionalContext") or hso.get("additionalContext")
     updated = data.get("updatedInput") or hso.get("updatedInput")
 
-    if not blocking and (decision in ("block", "deny") or permission_decision == "deny"):
+    if not blocking and (
+        decision in ("block", "deny") or permission_decision == "deny"
+    ):
         blocking = reason or "Operation blocked by hook"
 
     prevent = bool(data.get("preventContinuation", False))
@@ -216,16 +233,19 @@ class HookExecutor:
             if not _matches_pattern(tool_name, hook.match):
                 continue
 
-            hook_result = await self._execute_hook(hook, {
-                "hook_event_name": HookEvent.PRE_TOOL_USE.value,
-                "session_id": session_id,
-                "transcript_path": transcript_path,
-                "cwd": cwd,
-                "permission_mode": permission_mode,
-                "tool_name": tool_name,
-                "tool_input": tool_input,
-                "tool_use_id": tool_use_id,
-            })
+            hook_result = await self._execute_hook(
+                hook,
+                {
+                    "hook_event_name": HookEvent.PRE_TOOL_USE.value,
+                    "session_id": session_id,
+                    "transcript_path": transcript_path,
+                    "cwd": cwd,
+                    "permission_mode": permission_mode,
+                    "tool_name": tool_name,
+                    "tool_input": tool_input,
+                    "tool_use_id": tool_use_id,
+                },
+            )
 
             if hook_result.blocking_error:
                 return hook_result
@@ -266,17 +286,20 @@ class HookExecutor:
             if not _matches_pattern(tool_name, hook.match):
                 continue
 
-            hook_result = await self._execute_hook(hook, {
-                "hook_event_name": HookEvent.POST_TOOL_USE.value,
-                "session_id": session_id,
-                "transcript_path": transcript_path,
-                "cwd": cwd,
-                "permission_mode": permission_mode,
-                "tool_name": tool_name,
-                "tool_input": tool_input,
-                "tool_use_id": tool_use_id,
-                "tool_response": tool_output,
-            })
+            hook_result = await self._execute_hook(
+                hook,
+                {
+                    "hook_event_name": HookEvent.POST_TOOL_USE.value,
+                    "session_id": session_id,
+                    "transcript_path": transcript_path,
+                    "cwd": cwd,
+                    "permission_mode": permission_mode,
+                    "tool_name": tool_name,
+                    "tool_input": tool_input,
+                    "tool_use_id": tool_use_id,
+                    "tool_response": tool_output,
+                },
+            )
 
             if hook_result.blocking_error:
                 result.blocking_error = hook_result.blocking_error
@@ -313,18 +336,21 @@ class HookExecutor:
             if not _matches_pattern(tool_name, hook.match):
                 continue
 
-            hook_result = await self._execute_hook(hook, {
-                "hook_event_name": HookEvent.POST_TOOL_USE_FAILURE.value,
-                "session_id": session_id,
-                "transcript_path": transcript_path,
-                "cwd": cwd,
-                "permission_mode": permission_mode,
-                "tool_name": tool_name,
-                "tool_input": tool_input,
-                "tool_use_id": tool_use_id,
-                "error": error,
-                "is_interrupt": is_interrupt,
-            })
+            hook_result = await self._execute_hook(
+                hook,
+                {
+                    "hook_event_name": HookEvent.POST_TOOL_USE_FAILURE.value,
+                    "session_id": session_id,
+                    "transcript_path": transcript_path,
+                    "cwd": cwd,
+                    "permission_mode": permission_mode,
+                    "tool_name": tool_name,
+                    "tool_input": tool_input,
+                    "tool_use_id": tool_use_id,
+                    "error": error,
+                    "is_interrupt": is_interrupt,
+                },
+            )
 
             if hook_result.blocking_error:
                 result.blocking_error = hook_result.blocking_error
@@ -358,15 +384,18 @@ class HookExecutor:
         contexts: list[str] = []
 
         for hook in hooks:
-            hook_result = await self._execute_hook(hook, {
-                "hook_event_name": HookEvent.STOP.value,
-                "session_id": session_id,
-                "transcript_path": transcript_path,
-                "cwd": cwd,
-                "permission_mode": permission_mode,
-                "stop_hook_active": stop_hook_active,
-                "last_assistant_message": last_assistant_message,
-            })
+            hook_result = await self._execute_hook(
+                hook,
+                {
+                    "hook_event_name": HookEvent.STOP.value,
+                    "session_id": session_id,
+                    "transcript_path": transcript_path,
+                    "cwd": cwd,
+                    "permission_mode": permission_mode,
+                    "stop_hook_active": stop_hook_active,
+                    "last_assistant_message": last_assistant_message,
+                },
+            )
 
             if hook_result.prevent_continuation:
                 result.prevent_continuation = True
@@ -401,6 +430,7 @@ class HookExecutor:
             mq = data.get(field)
             if ev == "FileChanged" and mq:
                 from pathlib import Path as _P
+
                 mq = _P(str(mq)).name
             match_query = mq if mq else None
 
@@ -409,7 +439,11 @@ class HookExecutor:
         result = HookResult()
         contexts: list[str] = []
         for hook in hooks:
-            if match_query is not None and hook.match and not _matches_pattern(match_query, hook.match):
+            if (
+                match_query is not None
+                and hook.match
+                and not _matches_pattern(match_query, hook.match)
+            ):
                 continue
             hook_data = {
                 "hook_event_name": ev,
@@ -467,7 +501,8 @@ class HookExecutor:
             )
             try:
                 _timeout = (
-                    timeout_override if timeout_override is not None
+                    timeout_override
+                    if timeout_override is not None
                     else (hook.timeout or DEFAULT_HOOK_TIMEOUT)
                 )
                 stdout, stderr = await asyncio.wait_for(
@@ -497,9 +532,7 @@ class HookExecutor:
                     blocking_error=f"[{hook.command}]: {stderr_s or 'No stderr output'}",
                 )
             if rc not in (0, None):
-                logger.warning(
-                    f"Hook exited {rc}: {hook.command}: {stderr_s[:200]}"
-                )
+                logger.warning(f"Hook exited {rc}: {hook.command}: {stderr_s[:200]}")
                 return HookResult(outcome="error")
 
             return HookResult(
@@ -526,8 +559,10 @@ class HookExecutor:
         """Execute an HTTP webhook hook."""
         try:
             import httpx
+
             _timeout = (
-                timeout_override if timeout_override is not None
+                timeout_override
+                if timeout_override is not None
                 else (hook.timeout or DEFAULT_HOOK_TIMEOUT)
             )
             async with httpx.AsyncClient(timeout=_timeout) as client:

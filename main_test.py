@@ -26,7 +26,6 @@ import asyncio
 import contextlib
 import io
 import json
-import logging
 import shutil
 import signal
 import sys
@@ -43,7 +42,7 @@ load_dotenv()
 from agent.agent import Agent  # noqa: E402
 from agent.event import AgentEventType  # noqa: E402
 from config.config import Config  # noqa: E402
-
+from utils.logger import configure_logging  # noqa: E402
 
 C_RESET = "\033[0m"
 C_DIM = "\033[2m"
@@ -61,14 +60,7 @@ def color(text: str, c: str) -> str:
 
 
 def setup_logging(debug: bool) -> None:
-    level = logging.DEBUG if debug else logging.WARNING
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s.%(msecs)03d %(name)-30s %(levelname)-5s | %(message)s",
-        datefmt="%H:%M:%S",
-    )
-    for noisy in ("httpx", "httpcore", "anthropic", "openai", "asyncio", "urllib3"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+    configure_logging(debug=debug, verbose=True)
 
 
 @dataclass
@@ -105,9 +97,13 @@ async def always_deny(tool_name: str, message: str, is_destructive: bool) -> boo
 
 def setup_test_files(cwd: Path) -> None:
     """Populate cwd with a small predictable fixture set."""
-    (cwd / "README.md").write_text("# Test Project\n\nThis is a fixture for end-to-end tests.\n")
+    (cwd / "README.md").write_text(
+        "# Test Project\n\nThis is a fixture for end-to-end tests.\n"
+    )
     (cwd / "hello.py").write_text("def greet(name):\n    return f'hello {name}'\n")
-    (cwd / "data.txt").write_text("line one\nline two\nline three\nline four\nline five\n")
+    (cwd / "data.txt").write_text(
+        "line one\nline two\nline three\nline four\nline five\n"
+    )
     sub = cwd / "src"
     sub.mkdir(exist_ok=True)
     (sub / "a.py").write_text("import os\nprint('a')\n")
@@ -178,7 +174,9 @@ async def run_once(
     t0 = time.monotonic()
 
     stdout_buf = io.StringIO() if quiet else None
-    stdout_ctx = contextlib.redirect_stdout(stdout_buf) if quiet else contextlib.nullcontext()
+    stdout_ctx = (
+        contextlib.redirect_stdout(stdout_buf) if quiet else contextlib.nullcontext()
+    )
 
     try:
         with stdout_ctx:
@@ -190,7 +188,11 @@ async def run_once(
             ) as agent:
                 pending: dict[str, ToolCallRecord] = {}
                 async for event in agent.run(prompt):
-                    result.event_types.append(event.type.value if hasattr(event.type, "value") else str(event.type))
+                    result.event_types.append(
+                        event.type.value
+                        if hasattr(event.type, "value")
+                        else str(event.type)
+                    )
                     if event.type == AgentEventType.TEXT_DELTA:
                         result.text_output += event.data.get("content", "")
                     elif event.type == AgentEventType.TOOL_CALL_START:
@@ -205,7 +207,11 @@ async def run_once(
                         rec = pending.get(cid)
                         if rec:
                             rec.success = bool(event.data.get("success"))
-                            rec.output = (event.data.get("output") or event.data.get("error") or "")[:1000]
+                            rec.output = (
+                                event.data.get("output")
+                                or event.data.get("error")
+                                or ""
+                            )[:1000]
                     elif event.type == AgentEventType.AGENT_ERROR:
                         result.errors.append(event.data.get("error", ""))
                     elif event.type == AgentEventType.AGENT_END:
@@ -222,7 +228,9 @@ async def direct_bash_security_test(cwd: Path | None = None) -> RunResult:
     ask/deny). This NEVER executes the commands — it only checks the permission
     decision, so it's safe to run."""
     from core_types.permissions import (
-        PermissionBehavior, PermissionMode, ToolPermissionContext,
+        PermissionBehavior,
+        PermissionMode,
+        ToolPermissionContext,
     )
     from permissions.checker import PermissionChecker
     from tools.builtin.BashTool import BashTool
@@ -232,27 +240,49 @@ async def direct_bash_security_test(cwd: Path | None = None) -> RunResult:
         config.cwd = cwd
     tool = BashTool(config)
     actual_cwd = cwd or Path.cwd()
-    result = RunResult(prompt="[DIRECT] permission layer gates destructive commands", cwd=str(actual_cwd))
+    result = RunResult(
+        prompt="[DIRECT] permission layer gates destructive commands",
+        cwd=str(actual_cwd),
+    )
     t0 = time.monotonic()
 
     checker = PermissionChecker(ToolPermissionContext(mode=PermissionMode.DEFAULT))
-    dangerous = ["rm -rf /", "rm -rf /*", "mkfs.ext4 /dev/sda", ":(){ :|:& };:",
-                 "find . -delete", "tee /etc/passwd", "echo x > /etc/y"]
+    dangerous = [
+        "rm -rf /",
+        "rm -rf /*",
+        "mkfs.ext4 /dev/sda",
+        ":(){ :|:& };:",
+        "find . -delete",
+        "tee /etc/passwd",
+        "echo x > /etc/y",
+    ]
     for cmd in dangerous:
         decision = await checker.check(tool, {"command": cmd})
         gated = decision.behavior != PermissionBehavior.ALLOW
-        result.tool_calls.append(ToolCallRecord(
-            name="Bash(permission-check)", arguments={"command": cmd},
-            success=gated, output=f"behavior={decision.behavior.value}"))
+        result.tool_calls.append(
+            ToolCallRecord(
+                name="Bash(permission-check)",
+                arguments={"command": cmd},
+                success=gated,
+                output=f"behavior={decision.behavior.value}",
+            )
+        )
         if not gated:
-            result.errors.append(f"AUTO-ALLOWED dangerous cmd (should ask/deny): {cmd!r}")
+            result.errors.append(
+                f"AUTO-ALLOWED dangerous cmd (should ask/deny): {cmd!r}"
+            )
 
     for cmd in ["ls", "cat README.md", "git status"]:
         decision = await checker.check(tool, {"command": cmd})
         allowed = decision.behavior == PermissionBehavior.ALLOW
-        result.tool_calls.append(ToolCallRecord(
-            name="Bash(permission-check)", arguments={"command": cmd},
-            success=allowed, output=f"behavior={decision.behavior.value}"))
+        result.tool_calls.append(
+            ToolCallRecord(
+                name="Bash(permission-check)",
+                arguments={"command": cmd},
+                success=allowed,
+                output=f"behavior={decision.behavior.value}",
+            )
+        )
         if not allowed:
             result.errors.append(f"read wrongly gated: {cmd!r}")
 
@@ -292,13 +322,18 @@ async def direct_max_turns_test(cwd: Path | None = None) -> RunResult:
     session.client.chat_completion = fake_chat
 
     actual_cwd = cwd or Path.cwd()
-    result = RunResult(prompt="[DIRECT] max_turns=3 forces stop on 4th iteration", cwd=str(actual_cwd))
+    result = RunResult(
+        prompt="[DIRECT] max_turns=3 forces stop on 4th iteration", cwd=str(actual_cwd)
+    )
     t0 = time.monotonic()
     pending: dict[str, ToolCallRecord] = {}
     async for event in query_loop(session, config, permission_prompt_fn=None):
         result.event_types.append(event.type.value)
         if event.type.value == "tool_call_start":
-            rec = ToolCallRecord(name=event.data.get("name", ""), arguments=event.data.get("arguments", {}))
+            rec = ToolCallRecord(
+                name=event.data.get("name", ""),
+                arguments=event.data.get("arguments", {}),
+            )
             pending[event.data.get("call_id", "")] = rec
             result.tool_calls.append(rec)
         elif event.type.value == "tool_call_complete":
@@ -327,7 +362,13 @@ def print_result(r: RunResult) -> None:
     print(color(f"clean end:  {r.ended_cleanly}", C_DIM))
     print(color(f"tools:      {len(r.tool_calls)} calls", C_DIM))
     for tc in r.tool_calls:
-        marker = color("✓", C_GREEN) if tc.success else color("✗", C_RED) if tc.success is False else color("?", C_YELLOW)
+        marker = (
+            color("✓", C_GREEN)
+            if tc.success
+            else color("✗", C_RED)
+            if tc.success is False
+            else color("?", C_YELLOW)
+        )
         args_short = json.dumps(tc.arguments)[:80]
         out_short = tc.output.replace("\n", " ")[:100]
         print(f"  {marker} {tc.name}({args_short})")
@@ -346,11 +387,12 @@ def print_result(r: RunResult) -> None:
 
 def inspect_schemas() -> None:
     from tools.registry import create_default_registry
+
     config = Config()
     registry = create_default_registry(config)
     print(color("\n  TOOL INVENTORY\n", C_BOLD))
     print(f"  {'Tool':<22} {'desc':>5} {'prompt':>7} {'total':>7}")
-    print(f"  {'-'*22} {'-'*5} {'-'*7} {'-'*7}")
+    print(f"  {'-' * 22} {'-' * 5} {'-' * 7} {'-' * 7}")
     total_prompt = 0
     for t in registry.get_tools():
         d = len(t.description or "")
@@ -359,27 +401,46 @@ def inspect_schemas() -> None:
         total_prompt += p
         marker = color("verbatim", C_GREEN) if p else color("        ", C_DIM)
         print(f"  {t.name:<22} {d:>5} {p:>7} {total:>7}  {marker}")
-    print(f"\n  Total: {len(registry.get_tools())} tools, {total_prompt:,} chars of prompt content")
+    print(
+        f"\n  Total: {len(registry.get_tools())} tools, {total_prompt:,} chars of prompt content"
+    )
 
     print(color("\n  BUILT-IN AGENTS\n", C_BOLD))
     from tools.builtin.AgentTool.AgentTool import BUILT_IN_AGENTS
+
     for name, defn in BUILT_IN_AGENTS.items():
         sp = defn.resolve_system_prompt() or ""
-        print(f"  {name:<22} prompt={len(sp):>5}  model={defn.model:<8}  disallowed={len(defn.disallowed_tools)}")
+        print(
+            f"  {name:<22} prompt={len(sp):>5}  model={defn.model:<8}  disallowed={len(defn.disallowed_tools)}"
+        )
     print()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Flexible agent test runner")
-    parser.add_argument("prompt", nargs="?", default=None, help="Prompt to send the agent")
+    parser.add_argument(
+        "prompt", nargs="?", default=None, help="Prompt to send the agent"
+    )
     parser.add_argument("--cwd", default=None, help="Working directory override")
     parser.add_argument("--max-turns", type=int, default=None)
-    parser.add_argument("--permission", default=None, choices=["default", "plan", "bypass", "accept_edits", "dont_ask"])
-    parser.add_argument("--deny-all", action="store_true", help="auto-deny all permission prompts")
-    parser.add_argument("--setup-files", action="store_true", help="populate cwd with fixture files")
+    parser.add_argument(
+        "--permission",
+        default=None,
+        choices=["default", "plan", "bypass", "accept_edits", "dont_ask"],
+    )
+    parser.add_argument(
+        "--deny-all", action="store_true", help="auto-deny all permission prompts"
+    )
+    parser.add_argument(
+        "--setup-files", action="store_true", help="populate cwd with fixture files"
+    )
     parser.add_argument("--tempdir", action="store_true", help="run in a fresh tempdir")
-    parser.add_argument("--json", action="store_true", help="emit JSON result (parseable)")
-    parser.add_argument("--quiet", action="store_true", help="suppress agent's debug prints")
+    parser.add_argument(
+        "--json", action="store_true", help="emit JSON result (parseable)"
+    )
+    parser.add_argument(
+        "--quiet", action="store_true", help="suppress agent's debug prints"
+    )
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--inspect-schemas", action="store_true")
     parser.add_argument("--direct-bash-security", action="store_true")
@@ -413,14 +474,16 @@ def main() -> int:
             result = asyncio.run(direct_max_turns_test(cwd=cwd))
         else:
             prompt = args.prompt or "Reply with exactly: ok"
-            result = asyncio.run(run_once(
-                prompt=prompt,
-                cwd=cwd,
-                max_turns=args.max_turns,
-                permission_mode=args.permission,
-                permission_prompt=permission_prompt,
-                quiet=args.quiet,
-            ))
+            result = asyncio.run(
+                run_once(
+                    prompt=prompt,
+                    cwd=cwd,
+                    max_turns=args.max_turns,
+                    permission_mode=args.permission,
+                    permission_prompt=permission_prompt,
+                    quiet=args.quiet,
+                )
+            )
 
         if args.json:
             print(result.to_json())

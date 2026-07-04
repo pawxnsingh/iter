@@ -7,10 +7,11 @@ The system never crashes on bad config — it uses defaults instead.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 VALID_PERMISSION_MODES = {"default", "plan", "bypass", "accept_edits", "dont_ask"}
@@ -29,12 +30,16 @@ def validate_settings(settings: dict[str, Any]) -> list[str]:
     if isinstance(perms, dict):
         mode = perms.get("defaultMode")
         if mode and mode not in VALID_PERMISSION_MODES:
-            warnings.append(f"Invalid permission mode '{mode}'. Valid: {VALID_PERMISSION_MODES}")
+            warnings.append(
+                f"Invalid permission mode '{mode}'. Valid: {VALID_PERMISSION_MODES}"
+            )
 
         for behavior in ["allow", "deny", "ask"]:
             rules = perms.get(behavior, [])
             if not isinstance(rules, list):
-                warnings.append(f"permissions.{behavior} must be a list, got {type(rules).__name__}")
+                warnings.append(
+                    f"permissions.{behavior} must be a list, got {type(rules).__name__}"
+                )
 
     hooks = settings.get("hooks", {})
     if isinstance(hooks, dict):
@@ -50,7 +55,9 @@ def validate_settings(settings: dict[str, Any]) -> list[str]:
                 if hook_type not in VALID_HOOK_TYPES:
                     warnings.append(f"hooks.{event}[{i}].type '{hook_type}' invalid")
                 if hook_type == "command" and not hook.get("command"):
-                    warnings.append(f"hooks.{event}[{i}] command hook missing 'command'")
+                    warnings.append(
+                        f"hooks.{event}[{i}] command hook missing 'command'"
+                    )
                 if hook_type == "http" and not hook.get("url"):
                     warnings.append(f"hooks.{event}[{i}] http hook missing 'url'")
 

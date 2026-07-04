@@ -16,13 +16,13 @@ Threshold formula:
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
+from utils.logger import get_logger
 from utils.text import count_tokens
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 AUTOCOMPACT_BUFFER_TOKENS = 13_000
 WARNING_THRESHOLD_BUFFER_TOKENS = 20_000
@@ -37,6 +37,7 @@ class AutoCompactTracking:
     """
     Tracks compaction state across query loop iterations.
     """
+
     compacted: bool = False
     turn_counter: int = 0
     consecutive_failures: int = 0
@@ -46,6 +47,7 @@ class AutoCompactTracking:
 @dataclass
 class CompactionResult:
     """Result from a compaction operation."""
+
     messages: list
     summary: str
     tracking: AutoCompactTracking
@@ -75,6 +77,7 @@ def get_blocking_limit(context_window: int) -> int:
     Overridable via BLOCKING_LIMIT_OVERRIDE env var.
     """
     import os
+
     override = os.environ.get("BLOCKING_LIMIT_OVERRIDE")
     if override:
         parsed = int(override)
@@ -89,6 +92,7 @@ class TokenWarningState:
     calculateTokenWarningState return type.
     Five-level warning system for context usage.
     """
+
     percent_left: int
     is_above_warning: bool
     is_above_error: bool
@@ -112,7 +116,11 @@ def calculate_token_warning_state(
     auto_compact_threshold = get_auto_compact_threshold(context_window)
     threshold = auto_compact_threshold
 
-    percent_left = max(0, round(((threshold - token_usage) / threshold) * 100)) if threshold > 0 else 0
+    percent_left = (
+        max(0, round(((threshold - token_usage) / threshold) * 100))
+        if threshold > 0
+        else 0
+    )
 
     warning_threshold = threshold - WARNING_THRESHOLD_BUFFER_TOKENS
     error_threshold = threshold - ERROR_THRESHOLD_BUFFER_TOKENS
@@ -174,7 +182,10 @@ def should_auto_compact(
     if not _is_auto_compact_enabled():
         return False
 
-    if tracking and tracking.consecutive_failures >= MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES:
+    if (
+        tracking
+        and tracking.consecutive_failures >= MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES
+    ):
         logger.warning(
             f"Autocompact circuit breaker: {tracking.consecutive_failures} "
             f"consecutive failures, skipping"
@@ -287,12 +298,15 @@ POST_COMPACT_TOKEN_BUDGET = 50_000
 POST_COMPACT_MAX_FILES = 5
 
 
-def _post_compact_file_attachments(token_budget: int = POST_COMPACT_TOKEN_BUDGET,
-                                   max_files: int = POST_COMPACT_MAX_FILES) -> list:
+def _post_compact_file_attachments(
+    token_budget: int = POST_COMPACT_TOKEN_BUDGET,
+    max_files: int = POST_COMPACT_MAX_FILES,
+) -> list:
     """createPostCompactFileAttachments: re-read the most
     recently-read files (FRESH from disk) — up to max_files within token_budget —
     so the model regains concrete file context after the raw tail is dropped."""
     from pathlib import Path
+
     from context.manager import MessageItem
     from tools.builtin.shared import readFileState
 
@@ -340,6 +354,7 @@ def build_post_compact_messages(
     )
 
     from context.manager import MessageItem
+
     summary_msg = MessageItem(
         role="user",
         content=summary_content,
@@ -349,6 +364,7 @@ def build_post_compact_messages(
     attachments = _post_compact_file_attachments()
     try:
         from tools.builtin.shared import readFileState
+
         readFileState.clear()
     except Exception:
         pass

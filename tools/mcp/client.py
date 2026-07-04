@@ -9,7 +9,6 @@ Features:
 """
 
 import asyncio
-import logging
 import os
 from dataclasses import dataclass, field
 from enum import Enum
@@ -24,8 +23,9 @@ from fastmcp.client.transports import (
 )
 
 from config.config import MCPServerConfig
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 MAX_RECONNECT_ATTEMPTS = 5
 INITIAL_BACKOFF_SEC = 1
@@ -50,7 +50,9 @@ class MCPToolInfo:
     destructive: bool = False
 
 
-def _map_mcp_content(content: Any, server_name: str = "") -> tuple[str, list[dict[str, str]]]:
+def _map_mcp_content(
+    content: Any, server_name: str = ""
+) -> tuple[str, list[dict[str, str]]]:
     """Map an MCP result content array to (text, image-attachments).
 
     Mirrors transformResultContent:
@@ -94,7 +96,8 @@ def _map_mcp_content(content: Any, server_name: str = "") -> tuple[str, list[dic
             uri = getattr(item, "uri", "") or ""
             desc = getattr(item, "description", "") or ""
             line = (
-                f"[Resource link: {name}] {uri}".rstrip() if name
+                f"[Resource link: {name}] {uri}".rstrip()
+                if name
                 else f"[Resource link: {uri}]"
             )
             if desc:
@@ -120,7 +123,9 @@ class MCPClient:
     def tools(self) -> list[MCPToolInfo]:
         return list(self._tools.values())
 
-    def _create_transport(self) -> StdioTransport | SSETransport | StreamableHttpTransport:
+    def _create_transport(
+        self,
+    ) -> StdioTransport | SSETransport | StreamableHttpTransport:
         if self.config.command:
             env = os.environ.copy()
             env.update(self.config.env)
@@ -146,10 +151,14 @@ class MCPClient:
             await asyncio.wait_for(self._client.__aenter__(), timeout=conn_timeout_s)
 
             init_result = getattr(self._client, "initialize_result", None)
-            raw_instr = getattr(init_result, "instructions", None) if init_result else None
+            raw_instr = (
+                getattr(init_result, "instructions", None) if init_result else None
+            )
             if raw_instr:
                 self.instructions = (
-                    raw_instr[:2048] + "… [truncated]" if len(raw_instr) > 2048 else raw_instr
+                    raw_instr[:2048] + "… [truncated]"
+                    if len(raw_instr) > 2048
+                    else raw_instr
                 )
 
             tool_result = await asyncio.wait_for(
@@ -164,13 +173,19 @@ class MCPClient:
                         tool.inputSchema if hasattr(tool, "inputSchema") else {}
                     ),
                     server_name=self.name,
-                    read_only=bool(getattr(ann, "readOnlyHint", False)) if ann else False,
-                    destructive=bool(getattr(ann, "destructiveHint", False)) if ann else False,
+                    read_only=bool(getattr(ann, "readOnlyHint", False))
+                    if ann
+                    else False,
+                    destructive=bool(getattr(ann, "destructiveHint", False))
+                    if ann
+                    else False,
                 )
 
             self.status = MCPServerStatus.CONNECTED
             self._reconnect_attempts = 0
-            logger.info(f"MCP server '{self.name}' connected ({len(self._tools)} tools)")
+            logger.info(
+                f"MCP server '{self.name}' connected ({len(self._tools)} tools)"
+            )
         except Exception as e:
             self.status = MCPServerStatus.ERROR
             logger.warning(f"MCP server '{self.name}' connection failed: {e}")
@@ -196,10 +211,14 @@ class MCPClient:
             return False
 
         self._reconnect_attempts += 1
-        backoff = min(INITIAL_BACKOFF_SEC * (2 ** (self._reconnect_attempts - 1)), MAX_BACKOFF_SEC)
+        backoff = min(
+            INITIAL_BACKOFF_SEC * (2 ** (self._reconnect_attempts - 1)), MAX_BACKOFF_SEC
+        )
         self.status = MCPServerStatus.RECONNECTING
 
-        logger.info(f"MCP server '{self.name}' reconnecting in {backoff}s (attempt {self._reconnect_attempts}/{MAX_RECONNECT_ATTEMPTS})")
+        logger.info(
+            f"MCP server '{self.name}' reconnecting in {backoff}s (attempt {self._reconnect_attempts}/{MAX_RECONNECT_ATTEMPTS})"
+        )
         await asyncio.sleep(backoff)
 
         try:
@@ -225,6 +244,7 @@ class MCPClient:
             )
 
             import json as _json
+
             images: list[dict[str, str]] = []
             tool_result = getattr(result, "toolResult", None)
             if tool_result is None:
@@ -241,7 +261,7 @@ class MCPClient:
                 output, images = _map_mcp_content(result.content, self.name)
 
             if result.is_error:
-                for item in (result.content or []):
+                for item in result.content or []:
                     if getattr(item, "text", None):
                         output = item.text
                         break

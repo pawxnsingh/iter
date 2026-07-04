@@ -13,15 +13,14 @@ Algorithm:
 
 from __future__ import annotations
 
-import logging
-
 from context.manager import MessageItem
 from services.compact.auto_compact import (
     estimate_messages_tokens,
     get_auto_compact_threshold,
 )
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 MIN_GROUPS_TO_KEEP = 4
 
@@ -53,9 +52,7 @@ def snip_compact_if_needed(
 
     while len(groups) > MIN_GROUPS_TO_KEEP:
         group = groups[0]
-        group_tokens = sum(
-            estimate_messages_tokens([m], model) for m in group
-        )
+        group_tokens = sum(estimate_messages_tokens([m], model) for m in group)
 
         groups.pop(0)
         groups_dropped += 1

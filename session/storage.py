@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,7 +21,9 @@ from typing import Any
 
 from platformdirs import user_config_dir
 
-logger = logging.getLogger(__name__)
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 _APP_VERSION = "0.1.0"
 _git_branch_cache: dict[str, str] = {}
@@ -35,9 +36,13 @@ def _git_branch(cwd: str) -> str:
     branch = ""
     try:
         import subprocess
+
         out = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=cwd, capture_output=True, text=True, timeout=2,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=2,
         )
         if out.returncode == 0:
             branch = out.stdout.strip()
@@ -50,6 +55,7 @@ def _git_branch(cwd: str) -> str:
 @dataclass
 class SessionMetadata:
     """Metadata for a session, stored alongside the transcript."""
+
     session_id: str
     project_dir: str
     cwd: str
@@ -82,7 +88,8 @@ class SessionStorage:
 
     def __init__(self, session_id: str, project_dir: str):
         import re
-        if not re.match(r'^[a-zA-Z0-9_\-]{1,64}$', session_id):
+
+        if not re.match(r"^[a-zA-Z0-9_\-]{1,64}$", session_id):
             raise ValueError(f"Invalid session ID: {session_id}")
 
         base = _get_project_dir(project_dir) / "transcripts"
@@ -103,6 +110,7 @@ class SessionStorage:
         keep them flat so our loader reads them directly).
         """
         import uuid as uuid_mod
+
         msg_uuid = str(uuid_mod.uuid4())
         is_sidechain = extra.pop("is_sidechain", False)
         entry = {
@@ -126,8 +134,8 @@ class SessionStorage:
 
     def append_summary(self, summary: str) -> None:
         """Persist a compaction summary as a `type:'summary'` record
- keyed to the current chain leaf via leafUuid,
-        so a resume can see that compaction happened here."""
+        keyed to the current chain leaf via leafUuid,
+               so a resume can see that compaction happened here."""
         entry = {
             "type": "summary",
             "summary": summary,

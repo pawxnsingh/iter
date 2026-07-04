@@ -1,4 +1,3 @@
-import logging
 from pathlib import Path
 from tomllib import TOMLDecodeError, load
 from typing import Any
@@ -7,8 +6,9 @@ from platformdirs import user_config_dir, user_data_dir
 
 from config.config import Config
 from utils.errors import ConfigError
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 CONFIG_FILE_NAME = "config.toml"

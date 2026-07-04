@@ -20,7 +20,6 @@ Merge rules:
 from __future__ import annotations
 
 import json
-import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -28,8 +27,9 @@ from typing import Any
 from platformdirs import user_config_dir
 
 from core_types.hooks import HookCommand
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def get_settings_file_paths(cwd: str) -> dict[str, Path]:
@@ -94,7 +94,9 @@ def deep_merge(base: dict, override: dict) -> dict:
     for key, value in override.items():
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
             result[key] = deep_merge(result[key], value)
-        elif key in result and isinstance(result[key], list) and isinstance(value, list):
+        elif (
+            key in result and isinstance(result[key], list) and isinstance(value, list)
+        ):
             result[key] = _dedupe_preserving_order(result[key] + value)
         else:
             result[key] = value
@@ -122,7 +124,9 @@ def _load_settings_file(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def extract_hooks_from_settings(settings: dict[str, Any]) -> dict[str, list[HookCommand]]:
+def extract_hooks_from_settings(
+    settings: dict[str, Any],
+) -> dict[str, list[HookCommand]]:
     """
     Extract hooks from -shape settings.json.
 

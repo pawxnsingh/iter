@@ -8,7 +8,6 @@ launcher routes straight to run_tui().
 
 from __future__ import annotations
 
-import logging
 import sys
 from pathlib import Path
 
@@ -17,6 +16,7 @@ from dotenv import load_dotenv
 
 from config.loader import load_config
 from ui.app import run_tui
+from utils.logger import configure_logging
 
 load_dotenv()
 
@@ -52,7 +52,7 @@ def main(
         config.permission_mode = permission_mode
     if debug:
         config.debug = True
-        logging.basicConfig(level=logging.DEBUG)
+    configure_logging(debug=config.debug)
 
     errors = config.validate()
     if errors:

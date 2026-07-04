@@ -15,13 +15,14 @@ Each style file has frontmatter:
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 
 from platformdirs import user_config_dir
 
-logger = logging.getLogger(__name__)
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -98,7 +99,9 @@ def _parse_style_file(path: Path, source: str) -> OutputStyle | None:
     )
 
 
-def get_active_output_style(cwd: str, style_name: str | None = None) -> OutputStyle | None:
+def get_active_output_style(
+    cwd: str, style_name: str | None = None
+) -> OutputStyle | None:
     """Get the active output style by name."""
     if not style_name:
         return None

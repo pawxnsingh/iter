@@ -36,12 +36,14 @@ def require_context(*keys: str):
 
     def decorator(fn):
         if asyncio.iscoroutinefunction(fn):
+
             @functools.wraps(fn)
             async def async_wrapper(args: str, ctx: dict):
                 for key in keys:
                     if key not in ctx:
                         return _CTX_MISSING_MESSAGES.get(key, f"No {key} available.")
                 return await fn(args, ctx)
+
             return async_wrapper
 
         @functools.wraps(fn)
@@ -50,6 +52,7 @@ def require_context(*keys: str):
                 if key not in ctx:
                     return _CTX_MISSING_MESSAGES.get(key, f"No {key} available.")
             return fn(args, ctx)
+
         return wrapper
 
     return decorator
@@ -64,9 +67,11 @@ class SlashCommand:
 
 def register_command(name: str, description: str):
     """Decorator to register a slash command."""
+
     def decorator(fn):
         _COMMANDS[name] = SlashCommand(name=name, description=description, handler=fn)
         return fn
+
     return decorator
 
 
@@ -101,6 +106,7 @@ async def execute_slash_command(text: str, context: dict[str, Any]) -> str | Non
 
     try:
         import asyncio
+
         if asyncio.iscoroutinefunction(cmd.handler):
             return await cmd.handler(args, context)
         else:
@@ -124,7 +130,8 @@ async def _run_git(*args: str, merge_stderr: bool = False) -> tuple[int, str, st
         asyncio.subprocess.STDOUT if merge_stderr else asyncio.subprocess.PIPE
     )
     proc = await asyncio.create_subprocess_exec(
-        "git", *args,
+        "git",
+        *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=stderr_target,
     )
@@ -222,6 +229,7 @@ def cmd_memory(args: str, ctx: dict) -> str:
     import json
 
     from config.loader import get_data_dir
+
     path = get_data_dir() / "user_memory.json"
     if not path.exists():
         return "No memories stored."
@@ -280,12 +288,15 @@ def cmd_permissions(args: str, ctx: dict) -> str:
 @require_context("config")
 def cmd_sessions(args: str, ctx: dict) -> str:
     from session.storage import SessionStorage
+
     sessions = SessionStorage.list_sessions(str(ctx["config"].cwd))
     if not sessions:
         return "No previous sessions."
     lines = ["Previous sessions:", ""]
     for i, s in enumerate(sessions[:15]):
-        lines.append(f"  {i+1}. {s.session_id[:8]}... | {s.updated_at[:19]} | {s.turn_count} turns")
+        lines.append(
+            f"  {i + 1}. {s.session_id[:8]}... | {s.updated_at[:19]} | {s.turn_count} turns"
+        )
     return "\n".join(lines)
 
 
@@ -323,6 +334,7 @@ def cmd_export(args: str, ctx: dict) -> str:
 @register_command("doctor", "Diagnose common issues")
 def cmd_doctor(args: str, ctx: dict) -> str:
     import os
+
     lines = ["Diagnostics:", ""]
 
     has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY"))
@@ -348,6 +360,7 @@ def cmd_doctor(args: str, ctx: dict) -> str:
         lines.append(f"  Tools loaded:    {len(tools)}")
 
     from utils.paths import find_git_root
+
     if "config" in ctx:
         is_git = find_git_root(ctx["config"].cwd) is not None
         lines.append(f"  Git repo:        {'yes' if is_git else 'no'}")
@@ -357,18 +370,20 @@ def cmd_doctor(args: str, ctx: dict) -> str:
 
 @register_command("debug", "Toggle debug logging")
 def cmd_debug(args: str, ctx: dict) -> str:
-    import logging
+    from utils.logger import configure_logging
+
     if "config" in ctx:
         ctx["config"].debug = not ctx["config"].debug
-        level = logging.DEBUG if ctx["config"].debug else logging.WARNING
-        logging.basicConfig(level=level, force=True)
+        configure_logging(debug=ctx["config"].debug, force=True)
         return f"Debug: {'ON' if ctx['config'].debug else 'OFF'}"
     return "No config."
 
 
 @register_command("fast", "Toggle fast mode (shorter responses)")
 def cmd_fast(args: str, ctx: dict) -> str:
-    return "Fast mode is controlled by the model. Use /model to switch to a faster model."
+    return (
+        "Fast mode is controlled by the model. Use /model to switch to a faster model."
+    )
 
 
 @register_command("plan", "Toggle plan mode (blocks all tool execution)")
@@ -515,6 +530,7 @@ def cmd_files(args: str, ctx: dict) -> str:
                 args_str = func.get("arguments", "{}")
                 try:
                     import json
+
                     a = json.loads(args_str) if isinstance(args_str, str) else args_str
                     if isinstance(a, dict) and "path" in a:
                         paths.add(a["path"])
@@ -531,6 +547,7 @@ def cmd_files(args: str, ctx: dict) -> str:
 @register_command("env", "Show environment variables (filtered)")
 def cmd_env(args: str, ctx: dict) -> str:
     import os
+
     skip = {"KEY", "SECRET", "TOKEN", "PASSWORD", "CREDENTIAL"}
     lines = ["Environment (sensitive values hidden):", ""]
     for k, v in sorted(os.environ.items()):
@@ -539,12 +556,15 @@ def cmd_env(args: str, ctx: dict) -> str:
         else:
             val = v[:60] + "..." if len(v) > 60 else v
             lines.append(f"  {k}={val}")
-    return "\n".join(lines[:50]) + (f"\n  ... ({len(os.environ)} total)" if len(os.environ) > 50 else "")
+    return "\n".join(lines[:50]) + (
+        f"\n  ... ({len(os.environ)} total)" if len(os.environ) > 50 else ""
+    )
 
 
 @register_command("version", "Show version information")
 def cmd_version(args: str, ctx: dict) -> str:
     import platform
+
     return (
         f"Newt v0.1.0\n"
         f"Python {platform.python_version()}\n"
@@ -555,6 +575,7 @@ def cmd_version(args: str, ctx: dict) -> str:
 @register_command("providers", "Show available LLM providers")
 def cmd_providers(args: str, ctx: dict) -> str:
     import os
+
     lines = ["LLM Providers:", ""]
     providers = [
         ("Anthropic", "ANTHROPIC_API_KEY"),
@@ -567,7 +588,9 @@ def cmd_providers(args: str, ctx: dict) -> str:
         lines.append(f"  {name:<25} {status}")
     if "config" in ctx:
         lines.append(f"\n  Active: {ctx['config'].model_name}")
-    lines.append("\n  Set LLM_PROVIDER env to force a provider (anthropic/openai/azure)")
+    lines.append(
+        "\n  Set LLM_PROVIDER env to force a provider (anthropic/openai/azure)"
+    )
     return "\n".join(lines)
 
 
@@ -600,6 +623,7 @@ def cmd_keybindings(args: str, ctx: dict) -> str:
 @register_command("agents", "List available agent types")
 def cmd_agents(args: str, ctx: dict) -> str:
     from tools.builtin.AgentTool.AgentTool import BUILT_IN_AGENTS
+
     lines = ["Available agent types:", ""]
     for name, defn in sorted(BUILT_IN_AGENTS.items()):
         tools = ", ".join(defn.tools) if defn.tools else "all"
@@ -612,14 +636,16 @@ def cmd_agents(args: str, ctx: dict) -> str:
 @require_context("session")
 def cmd_tasks(args: str, ctx: dict) -> str:
     tool = ctx["session"].tool_registry.get("TodoWrite")
-    if not tool or not hasattr(tool, 'get_todos'):
+    if not tool or not hasattr(tool, "get_todos"):
         return "No task tracking tool available."
     todos = tool.get_todos()
     if not todos:
         return "No tasks."
     lines = ["Tasks:", ""]
     for t in todos:
-        icon = {"pending": "○", "in_progress": "◐", "completed": "●"}.get(t["status"], "?")
+        icon = {"pending": "○", "in_progress": "◐", "completed": "●"}.get(
+            t["status"], "?"
+        )
         lines.append(f"  {icon} [{t['status']}] {t['content']}")
     return "\n".join(lines)
 
@@ -638,6 +664,7 @@ def cmd_share(args: str, ctx: dict) -> str:
 @require_context("session")
 async def cmd_export_md(args: str, ctx: dict) -> str:
     from session.export import export_session_to_markdown
+
     path = ctx["session"].storage.path
     if not path.exists():
         return "No transcript yet."
@@ -657,6 +684,7 @@ async def cmd_stash(args: str, ctx: dict) -> str:
 @register_command("git", "Run a git command")
 async def cmd_git(args: str, ctx: dict) -> str:
     import shlex
+
     if not args.strip():
         return "Usage: /git <command> (e.g., /git status, /git log --oneline -5)"
     try:
@@ -691,6 +719,7 @@ def cmd_exit(args: str, ctx: dict) -> str:
 @require_context("config")
 def cmd_resume(args: str, ctx: dict) -> str:
     from session.storage import SessionStorage
+
     cwd = str(ctx["config"].cwd)
     sessions = SessionStorage.list_sessions(cwd)
     if not sessions:
@@ -712,7 +741,9 @@ def cmd_resume(args: str, ctx: dict) -> str:
 
     lines = ["Previous sessions (use /resume <number> to restore):", ""]
     for i, s in enumerate(sessions[:10]):
-        lines.append(f"  {i+1}. {s.session_id[:8]}... | {s.updated_at[:19]} | {s.turn_count} turns | {s.message_count} msgs")
+        lines.append(
+            f"  {i + 1}. {s.session_id[:8]}... | {s.updated_at[:19]} | {s.turn_count} turns | {s.message_count} msgs"
+        )
     return "\n".join(lines)
 
 
@@ -727,8 +758,11 @@ def _do_resume(session_meta, ctx: dict) -> str:
 
     slug = hashlib.md5(session_meta.project_dir.encode()).hexdigest()[:16]
     transcript_path = (
-        Path(user_config_dir("ai-agent")) / "projects" / slug
-        / "transcripts" / f"{session_meta.session_id}.jsonl"
+        Path(user_config_dir("ai-agent"))
+        / "projects"
+        / slug
+        / "transcripts"
+        / f"{session_meta.session_id}.jsonl"
     )
 
     if not transcript_path.exists():
@@ -752,6 +786,7 @@ def _do_resume(session_meta, ctx: dict) -> str:
     loaded = 0
     if last_summary_idx >= 0:
         from services.compact.prompt import get_compact_user_summary_message
+
         summary_msg = get_compact_user_summary_message(
             messages[last_summary_idx].get("summary", ""),
             suppress_follow_up_questions=True,
@@ -759,7 +794,7 @@ def _do_resume(session_meta, ctx: dict) -> str:
         )
         context_manager.add_user_message(summary_msg)
         loaded += 1
-        replay = messages[last_summary_idx + 1:]
+        replay = messages[last_summary_idx + 1 :]
     else:
         replay = messages
 
@@ -778,9 +813,7 @@ def _do_resume(session_meta, ctx: dict) -> str:
             loaded += 1
         elif role == "assistant":
             tool_calls = msg.get("tool_calls") or []
-            kept_calls = [
-                tc for tc in tool_calls if tc.get("id") in answered_ids
-            ]
+            kept_calls = [tc for tc in tool_calls if tc.get("id") in answered_ids]
             if tool_calls and not kept_calls and not (content or "").strip():
                 continue
             context_manager.add_assistant_message(

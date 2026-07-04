@@ -9,7 +9,6 @@ budget) and returns the API message list.
 (compaction orchestration) and the REPL's message array.
 """
 
-import logging
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Literal
 
@@ -24,9 +23,10 @@ from services.compact.auto_compact import (
 )
 from services.compact.micro_compact import micro_compact
 from tools.base import Tool
+from utils.logger import get_logger
 from utils.text import count_tokens
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _SYNTHETIC_TOOL_RESULT_PLACEHOLDER = "[Tool result missing due to internal error]"
 
@@ -49,11 +49,13 @@ def _ensure_tool_result_pairing(messages: list[dict[str, Any]]) -> list[dict[str
             for tc in m["tool_calls"]:
                 tcid = tc.get("id")
                 if tcid and tcid not in answered:
-                    out.append({
-                        "role": "tool",
-                        "tool_call_id": tcid,
-                        "content": _SYNTHETIC_TOOL_RESULT_PLACEHOLDER,
-                    })
+                    out.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tcid,
+                            "content": _SYNTHETIC_TOOL_RESULT_PLACEHOLDER,
+                        }
+                    )
                     answered.add(tcid)
     return out
 
@@ -82,12 +84,14 @@ class MessageItem:
             if self.content:
                 parts.append({"type": "text", "text": self.content})
             for img in self.images:
-                parts.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{img['media_type']};base64,{img['data']}"
-                    },
-                })
+                parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{img['media_type']};base64,{img['data']}"
+                        },
+                    }
+                )
             result["content"] = parts
         elif self.content:
             result["content"] = self.content
@@ -103,7 +107,9 @@ class ContextManager:
         tools: list[Tool] | None,
         mcp_instructions: list[tuple[str, str]] | None = None,
     ) -> None:
-        self._system_prompt = get_system_prompt(config, user_memory, tools, mcp_instructions)
+        self._system_prompt = get_system_prompt(
+            config, user_memory, tools, mcp_instructions
+        )
         self.config = config
         self._messages: list[MessageItem] = []
         self._model_name = self.config.model_name
@@ -111,7 +117,9 @@ class ContextManager:
 
         self._compact_tracking: AutoCompactTracking | None = None
 
-        self._compact_fn: Callable[[list[MessageItem], str], Awaitable[str]] | None = None
+        self._compact_fn: Callable[[list[MessageItem], str], Awaitable[str]] | None = (
+            None
+        )
         self._summary_sink: Callable[[str], None] | None = None
         self._transcript_path: str | None = None
         self._user_context_reminder: str | None = None
@@ -127,7 +135,9 @@ class ContextManager:
         appendSystemContext)."""
         self._system_context_suffix = text or None
 
-    def set_compact_fn(self, fn: Callable[[list[MessageItem], str], Awaitable[str]]) -> None:
+    def set_compact_fn(
+        self, fn: Callable[[list[MessageItem], str], Awaitable[str]]
+    ) -> None:
         """Inject the compact function (calls LLM to summarize)."""
         self._compact_fn = fn
 
@@ -172,7 +182,9 @@ class ContextManager:
         )
         self._messages.append(item)
 
-    def add_image_message(self, images: list[dict[str, str]], content: str = "") -> None:
+    def add_image_message(
+        self, images: list[dict[str, str]], content: str = ""
+    ) -> None:
         """Append a user message carrying image attachments.
 
         OpenAI/Azure accept image blocks only in user messages (not tool
@@ -251,7 +263,9 @@ class ContextManager:
         self.apply_tool_result_budget()
 
         self._messages = snip_compact_if_needed(
-            self._messages, context_window, self._model_name,
+            self._messages,
+            context_window,
+            self._model_name,
         )
 
         self._messages = micro_compact(self._messages)
@@ -280,9 +294,12 @@ class ContextManager:
                     if self._summary_sink:
                         try:
                             from services.compact.prompt import format_compact_summary
+
                             self._summary_sink(format_compact_summary(result.summary))
                         except Exception:
-                            logger.warning("Failed to persist compaction summary", exc_info=True)
+                            logger.warning(
+                                "Failed to persist compaction summary", exc_info=True
+                            )
 
         return self._build_api_messages()
 
@@ -326,7 +343,11 @@ class ContextManager:
         threshold = get_auto_compact_threshold(context_window)
         warn = calculate_token_warning_state(current_tokens, context_window)
 
-        percent_used = round((current_tokens / context_window) * 100, 1) if context_window > 0 else 0
+        percent_used = (
+            round((current_tokens / context_window) * 100, 1)
+            if context_window > 0
+            else 0
+        )
 
         return {
             "current_tokens": current_tokens,
@@ -335,7 +356,9 @@ class ContextManager:
             "percent_used": percent_used,
             "percent_left": warn.percent_left,
             "messages": len(self._messages),
-            "compacted": self._compact_tracking.compacted if self._compact_tracking else False,
+            "compacted": self._compact_tracking.compacted
+            if self._compact_tracking
+            else False,
             "above_warning": warn.is_above_warning,
             "above_error": warn.is_above_error,
             "above_compact": warn.is_above_auto_compact,

@@ -18,7 +18,6 @@ Flow:
 
 from __future__ import annotations
 
-import logging
 import os
 from typing import Awaitable, Callable
 
@@ -32,8 +31,9 @@ from permissions.filesystem import (
     path_in_working_directory,
 )
 from permissions.rules import match_rules_for_tool
+from utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 ACCEPT_EDITS_COMMANDS = {"mkdir", "touch", "rm", "rmdir", "mv", "cp", "sed"}
 
@@ -56,6 +56,7 @@ class PermissionChecker:
         Check if a tool call is permitted.
         Mirrors the hasPermissionsToUseToolInner.
         """
+
         def _ask(message: str, reason: str) -> PermissionResult:
             if self.context.mode == PermissionMode.DONT_ASK:
                 return PermissionResult.deny(
@@ -64,10 +65,12 @@ class PermissionChecker:
                 )
             return PermissionResult.ask(message, reason=reason)
 
-
-        deny_matches = match_rules_for_tool(tool.name, self.context.deny_rules, _pv(tool, params))
+        deny_matches = match_rules_for_tool(
+            tool.name, self.context.deny_rules, _pv(tool, params)
+        )
         if not deny_matches and tool.name == "Bash":
             from permissions.bash_security import split_and_normalize_command
+
             for seg in split_and_normalize_command(params.get("command", "")):
                 seg_match = match_rules_for_tool("Bash", self.context.deny_rules, seg)
                 if seg_match:
@@ -79,18 +82,20 @@ class PermissionChecker:
                 reason="rule:deny",
             )
 
-        ask_matches = match_rules_for_tool(tool.name, self.context.ask_rules, _pv(tool, params))
+        ask_matches = match_rules_for_tool(
+            tool.name, self.context.ask_rules, _pv(tool, params)
+        )
         if not ask_matches and tool.name == "Bash":
             from permissions.bash_security import split_and_normalize_command
+
             for seg in split_and_normalize_command(params.get("command", "")):
                 seg_match = match_rules_for_tool("Bash", self.context.ask_rules, seg)
                 if seg_match:
                     ask_matches = seg_match
                     break
 
-
         if not tool.is_read_only(params):
-            wpath = getattr(tool, 'get_path', lambda p: None)(params)
+            wpath = getattr(tool, "get_path", lambda p: None)(params)
             if wpath and is_protected_auto_edit_path(wpath):
                 return _ask(
                     f"Editing a protected config/VCS path: {wpath}",
@@ -112,22 +117,20 @@ class PermissionChecker:
                 if behavior == "allow":
                     return PermissionResult.allow(reason="tool:check")
 
-
         if self.context.mode == PermissionMode.BYPASS:
             return PermissionResult.allow(reason="mode:bypass")
 
         if tool.is_read_only(params):
-            rd_path = getattr(tool, 'get_path', lambda p: None)(params)
+            rd_path = getattr(tool, "get_path", lambda p: None)(params)
             work_dirs = self.context.working_directories or (os.getcwd(),)
             if rd_path and not os.path.isabs(rd_path):
                 rd_path = os.path.join(work_dirs[0], rd_path)
-            in_cwd = (
-                not rd_path
-                or path_in_working_directory(rd_path, work_dirs)
-            )
+            in_cwd = not rd_path or path_in_working_directory(rd_path, work_dirs)
             if in_cwd and not ask_matches:
                 return PermissionResult.allow(reason="read_only")
-            if match_rules_for_tool(tool.name, self.context.allow_rules, _pv(tool, params)):
+            if match_rules_for_tool(
+                tool.name, self.context.allow_rules, _pv(tool, params)
+            ):
                 return PermissionResult.allow(reason="rule:allow")
             if ask_matches:
                 return _ask(
@@ -149,10 +152,11 @@ class PermissionChecker:
             if self._is_accept_edits_allowed(tool, params) and not ask_matches:
                 return PermissionResult.allow(reason="mode:accept_edits")
 
-        allow_matches = match_rules_for_tool(tool.name, self.context.allow_rules, _pv(tool, params))
+        allow_matches = match_rules_for_tool(
+            tool.name, self.context.allow_rules, _pv(tool, params)
+        )
         if allow_matches:
             return PermissionResult.allow(reason="rule:allow")
-
 
         if ask_matches:
             return _ask(
@@ -173,21 +177,29 @@ class PermissionChecker:
         still apply. Returns a DENY/ASK PermissionResult if a rule matches, else
         None (meaning: allow). Honors Bash compound-command deny segments.
         """
-        deny_matches = match_rules_for_tool(tool.name, self.context.deny_rules, _pv(tool, params))
+        deny_matches = match_rules_for_tool(
+            tool.name, self.context.deny_rules, _pv(tool, params)
+        )
         if not deny_matches and tool.name == "Bash":
             from permissions.bash_security import split_and_normalize_command
+
             for seg in split_and_normalize_command(params.get("command", "")):
                 seg_match = match_rules_for_tool("Bash", self.context.deny_rules, seg)
                 if seg_match:
                     deny_matches = seg_match
                     break
         if deny_matches:
-            return PermissionResult.deny(f"Denied by rule: {deny_matches[0]}", reason="rule:deny")
+            return PermissionResult.deny(
+                f"Denied by rule: {deny_matches[0]}", reason="rule:deny"
+            )
 
-        ask_matches = match_rules_for_tool(tool.name, self.context.ask_rules, _pv(tool, params))
+        ask_matches = match_rules_for_tool(
+            tool.name, self.context.ask_rules, _pv(tool, params)
+        )
         if ask_matches:
             return PermissionResult.ask(
-                f"Allow {tool.name}? (matched rule: {ask_matches[0]})", reason="rule:ask"
+                f"Allow {tool.name}? (matched rule: {ask_matches[0]})",
+                reason="rule:ask",
             )
         return None
 
@@ -195,7 +207,7 @@ class PermissionChecker:
         """
         Check if tool is auto-allowed in accept_edits mode.
         """
-        path = getattr(tool, 'get_path', lambda p: None)(params)
+        path = getattr(tool, "get_path", lambda p: None)(params)
         if path and path_in_working_directory(path, self.context.working_directories):
             return True
 
@@ -203,10 +215,12 @@ class PermissionChecker:
             command = params.get("command", "").strip()
             if command:
                 from permissions.bash_security import split_and_normalize_command
+
                 segments = split_and_normalize_command(command)
                 if not segments:
                     return False
                 import shlex
+
                 for seg in segments:
                     try:
                         tokens = shlex.split(seg)
