@@ -46,15 +46,15 @@ class MainScreen(Screen):
         self.config = config
 
     def compose(self) -> ComposeResult:
-        yield SideBar(
-            SideBar.Panel("Plan", Plan([])),
-            SideBar.Panel(
-                "Project",
-                ProjectDirectoryTree(self.config.cwd, id="project-dir-tree"),
-                flex=True,
-            ),
-            id="sidebar",
-        )
+        # yield SideBar(
+        #     SideBar.Panel("Plan", Plan([])),
+        #     SideBar.Panel(
+        #         "Project",
+        #         ProjectDirectoryTree(self.config.cwd, id="project-dir-tree"),
+        #         flex=True,
+        #     ),
+        #     id="sidebar",
+        # )
         yield Conversation(self.config)
         commands = {name: cmd.description for name, cmd in get_all_commands().items()}
         prompt = Prompt(commands)
